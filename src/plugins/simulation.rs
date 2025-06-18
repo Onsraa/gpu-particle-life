@@ -1,12 +1,13 @@
 use bevy::prelude::*;
 
 use crate::states::simulation::SimulationState;
+use crate::systems::debug_particles::debug_particle_movement;
 use crate::systems::{
-    spawning::{spawn_simulations_with_particles, spawn_food},
-    movement::{calculate_forces, apply_movement},
     collision::detect_food_collision,
     debug::debug_scores,
+    movement::{apply_movement, calculate_forces},
     spatial_grid::{SpatialGrid, update_spatial_grid},
+    spawning::{spawn_food, spawn_simulations_with_particles},
 };
 
 pub struct SimulationPlugin;
@@ -16,47 +17,42 @@ impl Plugin for SimulationPlugin {
         app
             // État de la simulation
             .init_state::<SimulationState>()
-
             // Ressource pour la grille spatiale
             .init_resource::<SpatialGrid>()
-
             // Systèmes de démarrage (une seule fois au début de l'époque)
-            .add_systems(OnEnter(SimulationState::Starting), (
-                spawn_simulations_with_particles,
-                spawn_food,
-            ).chain())
-
+            .add_systems(
+                OnEnter(SimulationState::Starting),
+                (spawn_simulations_with_particles, spawn_food).chain(),
+            )
             // Transition automatique vers Running
-            .add_systems(Update,
-                         transition_to_running.run_if(in_state(SimulationState::Starting))
+            .add_systems(
+                Update,
+                transition_to_running.run_if(in_state(SimulationState::Starting)),
             )
-
             // Systèmes de simulation
-            .add_systems(Update, (
-                update_spatial_grid, // IMPORTANT: doit être avant calculate_forces
-                calculate_forces,
-                apply_movement,
-                detect_food_collision,
-                check_epoch_end,
-                debug_scores,
-            ).chain().run_if(in_state(SimulationState::Running)))
-
-            // Système de pause
-            .add_systems(Update,
-                         handle_pause_input
+            .add_systems(
+                Update,
+                (
+                    update_spatial_grid, // IMPORTANT: doit être avant calculate_forces
+                    calculate_forces,
+                    apply_movement,
+                    detect_food_collision,
+                    check_epoch_end,
+                    debug_scores,
+                    debug_particle_movement,
+                )
+                    .chain()
+                    .run_if(in_state(SimulationState::Running)),
             )
-
+            // Système de pause
+            .add_systems(Update, handle_pause_input)
             // Nettoyage en sortie d'époque
-            .add_systems(OnExit(SimulationState::Running),
-                         cleanup_epoch
-            );
+            .add_systems(OnExit(SimulationState::Running), cleanup_epoch);
     }
 }
 
 /// Transition automatique de Starting vers Running
-fn transition_to_running(
-    mut next_state: ResMut<NextState<SimulationState>>,
-) {
+fn transition_to_running(mut next_state: ResMut<NextState<SimulationState>>) {
     next_state.set(SimulationState::Running);
 }
 
@@ -89,11 +85,11 @@ fn handle_pause_input(
             SimulationState::Running => {
                 info!("Simulation en pause");
                 next_state.set(SimulationState::Paused);
-            },
+            }
             SimulationState::Paused => {
                 info!("Reprise de la simulation");
                 next_state.set(SimulationState::Running);
-            },
+            }
             _ => {}
         }
     }

@@ -4,3 +4,4 @@ pub mod collision;
 pub mod camera;
 pub mod debug;
 pub mod spatial_grid;
+pub mod debug_particles;

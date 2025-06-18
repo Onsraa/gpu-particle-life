@@ -61,30 +61,31 @@ pub fn calculate_forces(
                 let distance_vec = pos_b - *pos_a;
                 let distance = distance_vec.length();
 
-                // Ignorer si trop loin (double vérification)
-                if distance > sim_params.max_force_range {
+                // Ignorer si trop loin
+                if distance > sim_params.max_force_range || distance < 0.001 {
                     continue;
                 }
 
-                let force_direction = if distance > 0.0 {
-                    distance_vec.normalize()
-                } else {
-                    Vec3::ZERO
-                };
-
-                // Force génétique
-                if distance > MIN_DISTANCE {
-                    let genetic_force = genotype.decode_force(*type_a, type_b);
-                    let force_magnitude = genetic_force / (distance * distance);
-                    total_force += force_direction * force_magnitude;
-                }
+                let force_direction = distance_vec.normalize();
 
                 // Force de répulsion pour éviter la superposition
                 let overlap_distance = PARTICLE_RADIUS * 2.0;
-                if distance < overlap_distance && distance > 0.0 {
+                if distance < overlap_distance {
                     let overlap_amount = (overlap_distance - distance) / overlap_distance;
-                    let repulsion_force = -force_direction * PARTICLE_REPULSION_STRENGTH * overlap_amount;
+                    // Force de répulsion exponentielle pour éviter la superposition
+                    let repulsion_force = -force_direction * PARTICLE_REPULSION_STRENGTH * overlap_amount.powi(2);
                     total_force += repulsion_force;
+                }
+
+                // Force génétique seulement si pas trop proche
+                if distance > PARTICLE_RADIUS {
+                    let genetic_force = genotype.decode_force(*type_a, type_b);
+
+                    // Force avec atténuation en 1/r² mais avec une limite
+                    let distance_factor = (PARTICLE_RADIUS / distance).min(1.0);
+                    let force_magnitude = genetic_force * distance_factor;
+
+                    total_force += force_direction * force_magnitude;
                 }
             }
         }
@@ -92,10 +93,15 @@ pub fn calculate_forces(
         forces.insert(*entity_a, total_force);
     }
 
-    // Appliquer les forces
+    // Appliquer les forces avec F = ma => a = F/m
     for (entity, _, mut velocity, _, _) in particles.iter_mut() {
         if let Some(force) = forces.get(&entity) {
-            velocity.0 += *force * delta;
+            // Accélération = Force / Masse
+            let acceleration = *force / PARTICLE_MASS;
+            velocity.0 += acceleration * delta;
+
+            // Amortissement léger pour la stabilité
+            velocity.0 *= 0.99;
 
             // Limiter la vélocité maximale
             if velocity.0.length() > MAX_VELOCITY {
