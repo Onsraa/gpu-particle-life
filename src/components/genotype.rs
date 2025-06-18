@@ -4,7 +4,7 @@ use crate::globals::FORCE_SCALE_FACTOR;
 /// Génome encodé dans un entier
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct Genotype {
-    pub genome: u64, // Utilise u64 pour plus de flexibilité
+    pub genome: u64, 
     pub type_count: usize,
 }
 
@@ -28,6 +28,11 @@ impl Genotype {
         // Calcule l'index dans la matrice d'interaction
         let index = type_a * self.type_count + type_b;
         let bit_start = index * bits_per_interaction;
+
+        // Protéger contre le dépassement
+        if bit_start >= 64 {
+            return 0.0;
+        }
 
         // Extrait les bits correspondants
         let mask = (1u64 << bits_per_interaction) - 1;

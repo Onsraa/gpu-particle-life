@@ -1,6 +1,6 @@
 pub const DEFAULT_PARTICLE_COUNT: usize = 100;
 pub const DEFAULT_PARTICLE_TYPES: usize = 3;
-pub const DEFAULT_SIMULATION_COUNT: usize = 1;
+pub const DEFAULT_SIMULATION_COUNT: usize = 3;
 pub const DEFAULT_EPOCH_DURATION: f32 = 60.0; // secondes
 pub const DEFAULT_PARTICLES_PER_TYPE: usize = DEFAULT_PARTICLE_COUNT / DEFAULT_PARTICLE_TYPES;
 
@@ -13,13 +13,13 @@ pub const DEFAULT_GRID_DEPTH: f32 = 400.0;
 pub const DEFAULT_FOOD_COUNT: usize = 50;
 pub const DEFAULT_FOOD_RESPAWN_TIME: f32 = 5.0; // secondes
 pub const DEFAULT_FOOD_VALUE: f32 = 1.0;
-pub const FOOD_RADIUS: f32 = 2.0;
+pub const FOOD_RADIUS: f32 = 1.0;
 
 // Paramètres des particules
-pub const PARTICLE_RADIUS: f32 = 5.0;
+pub const PARTICLE_RADIUS: f32 = 2.5;
 pub const PARTICLE_MASS: f32 = 1.0;
 pub const MAX_VELOCITY: f32 = 100.0;
-pub const COLLISION_DAMPING: f32 = 0.8; // pour les rebonds sur les murs
+pub const COLLISION_DAMPING: f32 = 0.8; 
 
 // Paramètres des forces
 pub const DEFAULT_MAX_FORCE_RANGE: f32 = 200.0;

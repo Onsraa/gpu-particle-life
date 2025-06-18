@@ -8,5 +8,5 @@ pub struct SimulationId(pub usize);
 
 /// Marqueur pour une simulation
 #[derive(Component)]
-#[require(SimulationId, Genotype, Score, Transform)]
+#[require(SimulationId, Genotype, Score, Transform, Visibility, InheritedVisibility, ViewVisibility)]
 pub struct Simulation;

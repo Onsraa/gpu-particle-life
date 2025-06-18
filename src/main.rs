@@ -1,15 +1,16 @@
 use bevy::prelude::*;
 
+mod components;
 mod globals;
 mod plugins;
-mod systems;
-mod ui;
-mod components;
 mod resources;
 mod states;
+mod systems;
+mod ui;
 
-use plugins::{setup::SetupPlugin, simulation::SimulationPlugin};
 use crate::plugins::camera::CameraPlugin;
+use crate::plugins::ui::UIPlugin;
+use plugins::{setup::SetupPlugin, simulation::SimulationPlugin};
 
 fn main() {
     App::new()
@@ -22,14 +23,8 @@ fn main() {
             }),
             ..default()
         }))
-
         // Nos plugins
-        .add_plugins((
-            SetupPlugin,
-            SimulationPlugin,
-            CameraPlugin
-        ))
-
+        .add_plugins((SetupPlugin, SimulationPlugin, CameraPlugin, UIPlugin))
         // Lancer l'application
         .run();
 }
