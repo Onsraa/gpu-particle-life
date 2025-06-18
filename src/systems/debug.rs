@@ -1,7 +1,14 @@
+use bevy::prelude::*;
+use crate::components::{
+    simulation::{Simulation, SimulationId},
+    score::Score,
+};
+
+/// Affiche les scores périodiquement
 pub fn debug_scores(
     time: Res<Time>,
     mut timer: Local<Timer>,
-    simulations: Query<(&Simulation, &Score), With<Simulation>>,
+    simulations: Query<(&SimulationId, &Score), With<Simulation>>,
 ) {
     // Initialiser le timer la première fois
     if timer.duration() == std::time::Duration::ZERO {
@@ -13,7 +20,7 @@ pub fn debug_scores(
     if timer.just_finished() {
         let mut scores: Vec<(usize, f32)> = simulations
             .iter()
-            .map(|(sim, score)| (sim.id, score.get()))
+            .map(|(sim_id, score)| (sim_id.0, score.get()))
             .collect();
 
         // Trier par score décroissant

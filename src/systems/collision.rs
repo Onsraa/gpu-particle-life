@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 
 use crate::components::{
+    food::{Food, FoodRespawnTimer, FoodValue},
     particle::Particle,
-    food::Food,
     score::Score,
     simulation::Simulation,
 };
@@ -12,14 +12,25 @@ use crate::globals::*;
 pub fn detect_food_collision(
     mut commands: Commands,
     time: Res<Time>,
-    particles: Query<(&Transform, &Parent), With<Particle>>,
-    mut food_query: Query<(Entity, &Transform, &mut Food, &ViewVisibility)>,
+    particles: Query<(&Transform, &ChildOf), With<Particle>>,
+    mut food_query: Query<
+        (
+            Entity,
+            &Transform,
+            &FoodValue,
+            &mut FoodRespawnTimer,
+            &ViewVisibility,
+        ),
+        With<Food>,
+    >,
     mut simulations: Query<&mut Score, With<Simulation>>,
 ) {
     // Pour chaque nourriture
-    for (food_entity, food_transform, mut food, visibility) in food_query.iter_mut() {
+    for (food_entity, food_transform, food_value, mut respawn_timer, visibility) in
+        food_query.iter_mut()
+    {
         // Si la nourriture a un timer de respawn actif
-        if let Some(ref mut timer) = food.respawn_timer {
+        if let Some(ref mut timer) = respawn_timer.0 {
             if timer.finished() {
                 // La nourriture réapparaît
                 timer.reset();
@@ -41,15 +52,15 @@ pub fn detect_food_collision(
             if distance < collision_distance {
                 // Collision détectée !
                 // Augmenter le score de la simulation parente
-                if let Ok(mut score) = simulations.get_mut(parent.get()) {
-                    score.add(food.value);
+                if let Ok(mut score) = simulations.get_mut(parent.parent()) {
+                    score.add(food_value.0);
                 }
 
                 // Gérer la nourriture
-                if food.respawn_timer.is_some() {
+                if respawn_timer.0.is_some() {
                     // Si respawn activé, cacher la nourriture
                     commands.entity(food_entity).insert(Visibility::Hidden);
-                    if let Some(ref mut timer) = food.respawn_timer {
+                    if let Some(ref mut timer) = respawn_timer.0 {
                         timer.reset();
                     }
                 } else {

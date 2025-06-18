@@ -4,7 +4,7 @@ use crate::globals::*;
 #[derive(Resource)]
 pub struct ParticleTypesConfig {
     pub type_count: usize,
-    pub colors: Vec<Color>, // Couleur par type
+    pub colors: Vec<(Color, LinearRgba)>, // (base_color, emissive)
 }
 
 impl Default for ParticleTypesConfig {
@@ -24,14 +24,19 @@ impl ParticleTypesConfig {
         }
     }
 
-    /// Génère des couleurs distinctes pour chaque type
-    fn generate_colors(count: usize) -> Vec<Color> {
+    /// Génère des couleurs distinctes pour chaque type avec émissive
+    fn generate_colors(count: usize) -> Vec<(Color, LinearRgba)> {
         (0..count)
             .map(|i| {
-                // Utilise l'espace HSL pour des couleurs bien distinctes
                 let hue = (i as f32 / count as f32) * 360.0;
-                Color::hsl(hue, 0.8, 0.6)
+                let base_color = Color::hsl(hue, 0.8, 0.6);
+                let emissive = base_color.to_linear() * 0.5; // Émission modérée
+                (base_color, emissive)
             })
             .collect()
+    }
+
+    pub fn get_color_for_type(&self, type_index: usize) -> (Color, LinearRgba) {
+        self.colors[type_index % self.colors.len()]
     }
 }

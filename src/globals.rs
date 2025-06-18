@@ -1,6 +1,6 @@
-pub const DEFAULT_PARTICLE_COUNT: usize = 500;
+pub const DEFAULT_PARTICLE_COUNT: usize = 100;
 pub const DEFAULT_PARTICLE_TYPES: usize = 3;
-pub const DEFAULT_SIMULATION_COUNT: usize = 16;
+pub const DEFAULT_SIMULATION_COUNT: usize = 1;
 pub const DEFAULT_EPOCH_DURATION: f32 = 60.0; // secondes
 pub const DEFAULT_PARTICLES_PER_TYPE: usize = DEFAULT_PARTICLE_COUNT / DEFAULT_PARTICLE_TYPES;
 
@@ -32,6 +32,6 @@ pub const ELITE_RATIO: f32 = 0.2; // top 20% des génomes gardés
 pub const CROSSOVER_RATE: f32 = 0.7;
 
 // Paramètres de rendu
-pub const PARTICLE_SUBDIVISIONS: u32 = 2;
+pub const PARTICLE_SUBDIVISIONS: u32 = 8;
 
 pub const PARTICLE_REPULSION_STRENGTH: f32 = 50.0;
