@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use crate::states::simulation::SimulationState;
 
-struct SimulationPlugin;
+pub struct SimulationPlugin;
 
 impl Plugin for SimulationPlugin {
     fn build(&self, app: &mut App) {

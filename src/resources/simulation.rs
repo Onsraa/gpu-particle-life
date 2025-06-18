@@ -9,7 +9,7 @@ enum SimulationSpeed {
 }
 
 #[derive(Resource)]
-struct SimulationParameters {
+pub struct SimulationParameters {
     current_epoch: usize,
     max_epoch: usize,
     simulation_speed: SimulationSpeed,

@@ -5,5 +5,6 @@ pub enum SimulationState {
     #[default]
     Starting,
     Running,
-    Pausing,
+    Paused,
+    GeneticSelection,
 }

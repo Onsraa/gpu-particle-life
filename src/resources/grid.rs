@@ -5,9 +5,9 @@ const GRID_HEIGHT: f32 = 400.0;
 const GRID_DEPTH: f32 = 400.0;
 #[derive(Resource)]
 pub struct GridParameters {
-    width: f32,
-    height: f32,
-    depth: f32,
+    pub width: f32,
+    pub height: f32,
+    pub depth: f32,
 }
 
 impl Default for GridParameters {

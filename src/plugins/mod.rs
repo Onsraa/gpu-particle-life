@@ -1,2 +1,2 @@
-mod simulation;
-mod setup;
+pub mod simulation;
+pub mod setup;
