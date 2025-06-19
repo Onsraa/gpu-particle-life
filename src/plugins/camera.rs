@@ -10,8 +10,7 @@ impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraSettings>();
         app.add_systems(Startup, setup_default_camera);
-        //app.add_systems(Update, (orbit, manage_default_camera));
-        app.add_systems(Update, manage_default_camera);
+        app.add_systems(Update, (orbit, manage_default_camera));
     }
 }
 

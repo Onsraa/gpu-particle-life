@@ -1,5 +1,5 @@
 use crate::systems::viewport_manager::{
-    draw_viewport_borders, update_viewports, assign_render_layers,
+    draw_viewport_borders, update_viewports, assign_render_layers, UISpace,
 };
 use crate::ui::force_matrix::{ForceMatrixUI, force_matrix_ui, simulations_list_ui};
 use bevy::prelude::*;
@@ -13,6 +13,7 @@ impl Plugin for UIPlugin {
             enable_multipass_for_primary_context: true,
         });
         app.init_resource::<ForceMatrixUI>();
+        app.init_resource::<UISpace>();
         app.add_systems(
             Update,
             assign_render_layers,  // Assigner les layers aux entités

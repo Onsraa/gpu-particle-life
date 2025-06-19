@@ -7,6 +7,7 @@ use crate::components::{
     genotype::Genotype,
     particle::{Particle, ParticleType},
     simulation::{Simulation, SimulationId},
+    score::Score,
 };
 use crate::globals::*;
 use crate::resources::{
@@ -60,6 +61,7 @@ pub fn spawn_simulations_with_particles(
                 Simulation,
                 SimulationId(sim_id),
                 genotype,
+                Score::default(), // Ajouter le score
                 // Assigner le RenderLayer à la simulation (layer sim_id + 1)
                 RenderLayers::layer(sim_id + 1),
             ))

@@ -9,6 +9,7 @@ use crate::components::{
 };
 use crate::resources::particle_types::ParticleTypesConfig;
 use crate::resources::boundary::BoundaryMode;
+use crate::systems::viewport_manager::UISpace;
 
 /// Ressource pour stocker l'état de l'UI
 #[derive(Resource)]
@@ -23,7 +24,7 @@ pub struct ForceMatrixUI {
 impl Default for ForceMatrixUI {
     fn default() -> Self {
         let mut selected_simulations = HashSet::new();
-        selected_simulations.insert(0);
+        selected_simulations.insert(0); // Sélectionner la première simulation par défaut
 
         Self {
             selected_simulation: 0,
@@ -39,19 +40,26 @@ impl Default for ForceMatrixUI {
 pub fn simulations_list_ui(
     mut contexts: EguiContexts,
     mut ui_state: ResMut<ForceMatrixUI>,
+    mut ui_space: ResMut<UISpace>,
     simulations: Query<(&SimulationId, &Score), With<Simulation>>,
 ) {
     let ctx = contexts.ctx_mut();
 
     if !ui_state.show_simulations_list {
+        // Si la fenêtre est fermée, libérer l'espace
+        ui_space.right_panel_width = 0.0;
         return;
     }
 
-    egui::Window::new("Simulations")
-        .resizable(true)
-        .default_width(250.0)
+    let panel_width = 300.0; // Largeur fixe du panneau
+
+    egui::SidePanel::right("simulations_panel")
+        .exact_width(panel_width)
+        .resizable(false)
         .show(ctx, |ui| {
-            // Bouton pour sélectionner/désélectionner toutes
+            ui.heading("Simulations");
+
+            // Boutons pour sélectionner/désélectionner toutes
             ui.horizontal(|ui| {
                 if ui.button("Tout sélectionner").clicked() {
                     for (sim_id, _) in simulations.iter() {
@@ -65,12 +73,15 @@ pub fn simulations_list_ui(
 
             ui.separator();
 
-            // En-tête
+            // En-tête du tableau
             ui.horizontal(|ui| {
+                ui.add_space(5.0);
                 ui.label("Afficher");
                 ui.separator();
+                ui.add_space(5.0);
                 ui.label("Simulation");
                 ui.separator();
+                ui.add_space(5.0);
                 ui.label("Score");
             });
 
@@ -78,11 +89,13 @@ pub fn simulations_list_ui(
 
             // Liste des simulations avec scores
             let mut sim_list: Vec<_> = simulations.iter().collect();
-            sim_list.sort_by(|a, b| a.0.0.cmp(&b.0.0));
+            sim_list.sort_by(|a, b| b.1.get().partial_cmp(&a.1.get()).unwrap()); // Trier par score décroissant
 
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (sim_id, score) in sim_list {
                     ui.horizontal(|ui| {
+                        ui.add_space(10.0);
+
                         let mut is_selected = ui_state.selected_simulations.contains(&sim_id.0);
 
                         // Checkbox
@@ -95,14 +108,26 @@ pub fn simulations_list_ui(
                         }
 
                         ui.separator();
+                        ui.add_space(15.0);
 
                         // Numéro de simulation
                         ui.label(format!("#{}", sim_id.0 + 1));
 
                         ui.separator();
+                        ui.add_space(15.0);
 
-                        // Score
-                        ui.label(format!("{:.0}", score.get()));
+                        // Score avec coloration selon la valeur
+                        let score_value = score.get();
+                        let score_color = if score_value > 10.0 {
+                            egui::Color32::GREEN
+                        } else if score_value > 5.0 {
+                            egui::Color32::YELLOW
+                        } else {
+                            egui::Color32::WHITE
+                        };
+
+                        ui.label(egui::RichText::new(format!("{:.0}", score_value))
+                            .color(score_color));
                     });
                 }
             });
@@ -110,6 +135,9 @@ pub fn simulations_list_ui(
             ui.separator();
             ui.label(format!("{} simulation(s) sélectionnée(s)", ui_state.selected_simulations.len()));
         });
+
+    // Mettre à jour l'espace occupé par l'UI
+    ui_space.right_panel_width = panel_width;
 }
 
 /// Système principal de l'UI (matrice des forces et paramètres)
@@ -158,7 +186,7 @@ pub fn force_matrix_ui(
             });
     }
 
-    // Fenêtre matrice des forces (inchangée)
+    // Fenêtre matrice des forces
     if !ui_state.show_window {
         return;
     }
@@ -166,7 +194,6 @@ pub fn force_matrix_ui(
     egui::Window::new("Matrice des Forces")
         .resizable(true)
         .show(ctx, |ui| {
-            // ... reste du code de la matrice inchangé ...
             // Sélection de la simulation avec visualisation
             ui.horizontal(|ui| {
                 ui.label("Simulation:");

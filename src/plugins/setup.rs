@@ -47,6 +47,7 @@ fn setup_grid_visualization(
         Mesh3d(meshes.add(Cuboid::new(grid.width, grid.height, grid.depth))),
         MeshMaterial3d(grid_material),
         Transform::from_translation(Vec3::ZERO),
+        // Layer 0 pour être visible par toutes les caméras
         RenderLayers::layer(0),
     ));
 }
