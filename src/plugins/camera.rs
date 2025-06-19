@@ -10,7 +10,7 @@ impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraSettings>();
         app.add_systems(Startup, setup_default_camera);
-        app.add_systems(Update, (orbit, manage_default_camera));
+        app.add_systems(Update, manage_default_camera);
     }
 }
 
@@ -25,8 +25,6 @@ fn setup_default_camera(mut commands: Commands) {
         Transform::from_xyz(500.0, 500.0, 500.0)
             .looking_at(Vec3::ZERO, Vec3::Y),
         DefaultCamera,
-        // Layer 0 pour voir la grille et la nourriture
-        // Layer 1 pour voir la première simulation
         RenderLayers::from_layers(&[0, 1]),
     ));
 }
