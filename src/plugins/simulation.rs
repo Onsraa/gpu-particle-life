@@ -33,7 +33,7 @@ impl Plugin for SimulationPlugin {
             .add_systems(
                 Update,
                 (
-                    update_spatial_grid, // IMPORTANT: doit être avant calculate_forces
+                    update_spatial_grid, 
                     calculate_forces,
                     apply_movement,
                     detect_food_collision,

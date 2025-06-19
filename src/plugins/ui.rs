@@ -1,5 +1,7 @@
-use crate::systems::visual_highlight::highlight_selected_simulation;
-use crate::ui::force_matrix::{ForceMatrixUI, force_matrix_ui};
+use crate::systems::viewport_manager::{
+    draw_viewport_borders, filter_particle_visibility, update_viewports,
+};
+use crate::ui::force_matrix::{ForceMatrixUI, force_matrix_ui, simulations_list_ui};
 use bevy::prelude::*;
 use bevy_egui::{EguiContextPass, EguiPlugin};
 
@@ -13,7 +15,13 @@ impl Plugin for UIPlugin {
         app.init_resource::<ForceMatrixUI>();
         app.add_systems(
             EguiContextPass,
-            (force_matrix_ui, highlight_selected_simulation),
+            (
+                force_matrix_ui,
+                simulations_list_ui,
+                update_viewports,
+                filter_particle_visibility,
+                draw_viewport_borders,
+            ),
         );
     }
 }

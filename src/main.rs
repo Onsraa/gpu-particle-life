@@ -23,8 +23,10 @@ fn main() {
             }),
             ..default()
         }))
-        // Nos plugins
-        .add_plugins((SetupPlugin, SimulationPlugin, CameraPlugin, UIPlugin))
-        // Lancer l'application
+        .add_plugins((
+            SetupPlugin, 
+            SimulationPlugin, 
+            //CameraPlugin, 
+            UIPlugin))
         .run();
 }
