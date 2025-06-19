@@ -6,6 +6,7 @@ use crate::resources::{
     particle_types::ParticleTypesConfig,
     food::FoodParameters,
 };
+use crate::resources::boundary::BoundaryMode;
 
 pub struct SetupPlugin;
 
@@ -17,7 +18,8 @@ impl Plugin for SetupPlugin {
             .init_resource::<SimulationParameters>()
             .init_resource::<ParticleTypesConfig>()
             .init_resource::<FoodParameters>()
-
+            .init_resource::<BoundaryMode>()
+            
             // Systèmes de setup
             .add_systems(Startup, (
                 setup_camera,

@@ -1,16 +1,14 @@
 use bevy::prelude::*;
 
 use crate::components::{
-    particle::{Particle, ParticleType, Velocity},
     genotype::Genotype,
+    particle::{Particle, ParticleType, Velocity},
     simulation::{Simulation, SimulationId},
 };
-use crate::resources::{
-    grid::GridParameters,
-    simulation::SimulationParameters,
-};
-use crate::systems::spatial_grid::SpatialGrid;
 use crate::globals::*;
+use crate::resources::boundary::BoundaryMode;
+use crate::resources::{grid::GridParameters, simulation::SimulationParameters};
+use crate::systems::spatial_grid::SpatialGrid;
 
 /// Calcule les forces entre particules en utilisant la grille spatiale
 pub fn calculate_forces(
@@ -18,7 +16,10 @@ pub fn calculate_forces(
     sim_params: Res<SimulationParameters>,
     spatial_grid: Res<SpatialGrid>,
     simulations: Query<(&SimulationId, &Genotype), With<Simulation>>,
-    mut particles: Query<(Entity, &Transform, &mut Velocity, &ParticleType, &ChildOf), With<Particle>>,
+    mut particles: Query<
+        (Entity, &Transform, &mut Velocity, &ParticleType, &ChildOf),
+        With<Particle>,
+    >,
 ) {
     // Skip si en pause
     if sim_params.simulation_speed == crate::resources::simulation::SimulationSpeed::Paused {
@@ -37,9 +38,10 @@ pub fn calculate_forces(
     let particle_data: Vec<_> = particles
         .iter()
         .filter_map(|(entity, transform, _, particle_type, parent)| {
-            simulations.get(parent.parent()).ok().map(|(sim_id, _)| {
-                (entity, transform.translation, particle_type.0, sim_id.0)
-            })
+            simulations
+                .get(parent.parent())
+                .ok()
+                .map(|(sim_id, _)| (entity, transform.translation, particle_type.0, sim_id.0))
         })
         .collect();
 
@@ -73,7 +75,8 @@ pub fn calculate_forces(
                 if distance < overlap_distance {
                     let overlap_amount = (overlap_distance - distance) / overlap_distance;
                     // Force de répulsion exponentielle pour éviter la superposition
-                    let repulsion_force = -force_direction * PARTICLE_REPULSION_STRENGTH * overlap_amount.powi(2);
+                    let repulsion_force =
+                        -force_direction * PARTICLE_REPULSION_STRENGTH * overlap_amount.powi(2);
                     total_force += repulsion_force;
                 }
 
@@ -116,6 +119,7 @@ pub fn apply_movement(
     time: Res<Time>,
     sim_params: Res<SimulationParameters>,
     grid: Res<GridParameters>,
+    boundary_mode: Res<BoundaryMode>,
     mut particles: Query<(&mut Transform, &mut Velocity), With<Particle>>,
 ) {
     // Skip si en pause
@@ -129,7 +133,7 @@ pub fn apply_movement(
         // Appliquer la vélocité
         transform.translation += velocity.0 * delta;
 
-        // Gérer les rebonds sur les murs
-        grid.apply_bounds(&mut transform.translation, &mut velocity.0);
+        // Gérer les bords selon le mode
+        grid.apply_bounds(&mut transform.translation, &mut velocity.0, *boundary_mode);
     }
 }

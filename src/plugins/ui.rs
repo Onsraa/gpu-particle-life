@@ -1,7 +1,7 @@
+use crate::systems::visual_highlight::highlight_selected_simulation;
+use crate::ui::force_matrix::{ForceMatrixUI, force_matrix_ui};
 use bevy::prelude::*;
 use bevy_egui::{EguiContextPass, EguiPlugin};
-
-use crate::ui::force_matrix::{ForceMatrixUI, force_matrix_ui};
 
 pub struct UIPlugin;
 
@@ -11,6 +11,9 @@ impl Plugin for UIPlugin {
             enable_multipass_for_primary_context: true,
         });
         app.init_resource::<ForceMatrixUI>();
-        app.add_systems(EguiContextPass, force_matrix_ui);
+        app.add_systems(
+            EguiContextPass,
+            (force_matrix_ui, highlight_selected_simulation),
+        );
     }
 }

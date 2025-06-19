@@ -5,6 +5,7 @@ use crate::components::{
     simulation::{Simulation, SimulationId},
     genotype::Genotype,
 };
+use crate::resources::boundary::BoundaryMode;
 use crate::resources::particle_types::ParticleTypesConfig;
 
 /// Ressource pour stocker l'état de l'UI
@@ -12,6 +13,7 @@ use crate::resources::particle_types::ParticleTypesConfig;
 pub struct ForceMatrixUI {
     pub selected_simulation: usize,
     pub show_window: bool,
+    pub show_settings: bool,
 }
 
 /// Système pour afficher la matrice des forces
@@ -19,18 +21,43 @@ pub fn force_matrix_ui(
     mut contexts: EguiContexts,
     mut ui_state: ResMut<ForceMatrixUI>,
     particle_config: Res<ParticleTypesConfig>,
-    mut simulations: Query<(&SimulationId, &mut Genotype), With<Simulation>>,
+    mut simulations: Query<(&SimulationId, &mut Genotype, &Transform), With<Simulation>>,
+    mut boundary_mode: ResMut<BoundaryMode>,
 ) {
     let ctx = contexts.ctx_mut();
 
-    // Menu pour toggle la fenêtre
+    // Menu pour toggle les fenêtres
     egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
         ui.horizontal(|ui| {
             if ui.button("Matrice des Forces").clicked() {
                 ui_state.show_window = !ui_state.show_window;
             }
+            if ui.button("Paramètres").clicked() {
+                ui_state.show_settings = !ui_state.show_settings;
+            }
         });
     });
+
+    // Fenêtre des paramètres
+    if ui_state.show_settings {
+        egui::Window::new("Paramètres")
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.heading("Mode de bords");
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(*boundary_mode == BoundaryMode::Bounce, "Rebond").clicked() {
+                        *boundary_mode = BoundaryMode::Bounce;
+                    }
+                    if ui.selectable_label(*boundary_mode == BoundaryMode::Teleport, "Téléportation").clicked() {
+                        *boundary_mode = BoundaryMode::Teleport;
+                    }
+                });
+
+                ui.separator();
+                ui.label("Le mode Rebond fait rebondir les particules sur les murs.");
+                ui.label("Le mode Téléportation les fait apparaître de l'autre côté.");
+            });
+    }
 
     if !ui_state.show_window {
         return;
@@ -39,28 +66,40 @@ pub fn force_matrix_ui(
     egui::Window::new("Matrice des Forces")
         .resizable(true)
         .show(ctx, |ui| {
-            // Sélection de la simulation
+            // Sélection de la simulation avec visualisation
             ui.horizontal(|ui| {
                 ui.label("Simulation:");
-                if let Some((_, genotype)) = simulations.iter_mut().nth(ui_state.selected_simulation) {
-                    ui.label(format!("#{}", ui_state.selected_simulation));
 
-                    // Boutons pour changer de simulation
-                    if ui.button("<").clicked() && ui_state.selected_simulation > 0 {
-                        ui_state.selected_simulation -= 1;
-                    }
+                let sim_count = simulations.iter().count();
 
-                    let sim_count = simulations.iter().count();
-                    if ui.button(">").clicked() && ui_state.selected_simulation < sim_count - 1 {
-                        ui_state.selected_simulation += 1;
-                    }
+                // Boutons pour changer de simulation
+                if ui.button("<").clicked() && ui_state.selected_simulation > 0 {
+                    ui_state.selected_simulation -= 1;
+                }
+
+                ui.label(format!("{}/{}", ui_state.selected_simulation + 1, sim_count));
+
+                if ui.button(">").clicked() && ui_state.selected_simulation < sim_count - 1 {
+                    ui_state.selected_simulation += 1;
                 }
             });
 
             ui.separator();
 
+            // Afficher la position de la simulation sélectionnée
+            if let Some((_, _, transform)) = simulations.iter().nth(ui_state.selected_simulation) {
+                ui.label(format!("Position: ({:.1}, {:.1}, {:.1})",
+                                 transform.translation.x,
+                                 transform.translation.y,
+                                 transform.translation.z
+                ));
+            }
+
+            ui.separator();
+
             // Afficher et éditer la matrice
-            if let Some((_, mut genotype)) = simulations.iter_mut().nth(ui_state.selected_simulation) {
+            if let Some((_, mut genotype, _)) = simulations.iter_mut().nth(ui_state.selected_simulation) {
+                // ... reste du code de la matrice inchangé ...
                 let type_count = particle_config.type_count;
 
                 ui.label(format!("Types de particules: {}", type_count));

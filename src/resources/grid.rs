@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use crate::globals::*;
+use crate::resources::boundary::BoundaryMode;
 
 #[derive(Resource)]
 pub struct GridParameters {
@@ -30,8 +31,16 @@ impl GridParameters {
             position.z.abs() <= half_depth
     }
 
-    /// Applique les rebonds sur les murs si nécessaire
-    pub fn apply_bounds(&self, position: &mut Vec3, velocity: &mut Vec3) {
+    /// Applique les bords selon le mode (rebond ou téléportation)
+    pub fn apply_bounds(&self, position: &mut Vec3, velocity: &mut Vec3, mode: BoundaryMode) {
+        match mode {
+            BoundaryMode::Bounce => self.apply_bounce_bounds(position, velocity),
+            BoundaryMode::Teleport => self.apply_teleport_bounds(position),
+        }
+    }
+
+    /// Applique les rebonds sur les murs
+    fn apply_bounce_bounds(&self, position: &mut Vec3, velocity: &mut Vec3) {
         let half_width = self.width / 2.0;
         let half_height = self.height / 2.0;
         let half_depth = self.depth / 2.0;
@@ -54,4 +63,32 @@ impl GridParameters {
             velocity.z *= -COLLISION_DAMPING;
         }
     }
-}   
+
+    /// Téléporte les particules de l'autre côté
+    fn apply_teleport_bounds(&self, position: &mut Vec3) {
+        let half_width = self.width / 2.0;
+        let half_height = self.height / 2.0;
+        let half_depth = self.depth / 2.0;
+
+        // Téléportation X
+        if position.x > half_width {
+            position.x = -half_width + (position.x - half_width);
+        } else if position.x < -half_width {
+            position.x = half_width + (position.x + half_width);
+        }
+
+        // Téléportation Y
+        if position.y > half_height {
+            position.y = -half_height + (position.y - half_height);
+        } else if position.y < -half_height {
+            position.y = half_height + (position.y + half_height);
+        }
+
+        // Téléportation Z
+        if position.z > half_depth {
+            position.z = -half_depth + (position.z - half_depth);
+        } else if position.z < -half_depth {
+            position.z = half_depth + (position.z + half_depth);
+        }
+    }
+}
