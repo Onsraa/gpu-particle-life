@@ -1,5 +1,5 @@
 use crate::systems::viewport_manager::{
-    draw_viewport_borders, filter_particle_visibility, update_viewports,
+    draw_viewport_borders, update_viewports, assign_render_layers,
 };
 use crate::ui::force_matrix::{ForceMatrixUI, force_matrix_ui, simulations_list_ui};
 use bevy::prelude::*;
@@ -14,12 +14,15 @@ impl Plugin for UIPlugin {
         });
         app.init_resource::<ForceMatrixUI>();
         app.add_systems(
+            Update,
+            assign_render_layers,  // Assigner les layers aux entités
+        );
+        app.add_systems(
             EguiContextPass,
             (
                 force_matrix_ui,
                 simulations_list_ui,
                 update_viewports,
-                filter_particle_visibility,
                 draw_viewport_borders,
             ),
         );

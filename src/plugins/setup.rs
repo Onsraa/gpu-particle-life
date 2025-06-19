@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::render::view::RenderLayers;
 
 use crate::resources::{
     grid::GridParameters,
@@ -19,23 +20,13 @@ impl Plugin for SetupPlugin {
             .init_resource::<ParticleTypesConfig>()
             .init_resource::<FoodParameters>()
             .init_resource::<BoundaryMode>()
-            
+
             // Systèmes de setup
             .add_systems(Startup, (
-                // setup_camera,
                 setup_grid_visualization,
             ));
     }
 }
-
-/// Configure la caméra 3D
-// fn setup_camera(mut commands: Commands) {
-//     commands.spawn((
-//         Camera3d::default(),
-//         Transform::from_xyz(500.0, 500.0, 500.0)
-//             .looking_at(Vec3::ZERO, Vec3::Y),
-//     ));
-// }
 
 fn setup_grid_visualization(
     mut commands: Commands,
@@ -56,5 +47,6 @@ fn setup_grid_visualization(
         Mesh3d(meshes.add(Cuboid::new(grid.width, grid.height, grid.depth))),
         MeshMaterial3d(grid_material),
         Transform::from_translation(Vec3::ZERO),
+        RenderLayers::layer(0),
     ));
 }

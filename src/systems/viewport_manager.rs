@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::render::view::RenderLayers;
 use crate::ui::force_matrix::ForceMatrixUI;
 
 /// Marqueur pour les caméras des viewports
@@ -68,7 +69,6 @@ pub fn update_viewports(
     mut commands: Commands,
     ui_state: Res<ForceMatrixUI>,
     windows: Query<&Window>,
-    mut cameras: Query<(Entity, &mut Camera, &ViewportCamera)>,
     existing_cameras: Query<Entity, With<ViewportCamera>>,
 ) {
     // Si l'état n'a pas changé, on ne fait rien
@@ -85,14 +85,10 @@ pub fn update_viewports(
         commands.entity(entity).despawn();
     }
 
-    // Si aucune simulation sélectionnée, créer une caméra par défaut
-    // if selected_sims.is_empty() {
-    //     commands.spawn((
-    //         Camera3d::default(),
-    //         Transform::from_xyz(500.0, 500.0, 500.0).looking_at(Vec3::ZERO, Vec3::Y),
-    //     ));
-    //     return;
-    // }
+    // Si aucune simulation sélectionnée, ne pas créer de caméra
+    if selected_sims.is_empty() {
+        return;
+    }
 
     // Calculer les viewports
     let viewports = calculate_viewport_layout(
@@ -105,13 +101,16 @@ pub fn update_viewports(
     for (idx, &sim_id) in selected_sims.iter().enumerate() {
         if let Some((position, size)) = viewports.get(idx) {
             // Ajuster pour les bordures (2 pixels de marge)
-            let adjusted_pos = *position + Vec2::splat(1.0);
-            let adjusted_size = *size - Vec2::splat(2.0);
+            let adjusted_pos = *position + Vec2::splat(2.0);
+            let adjusted_size = *size - Vec2::splat(4.0);
+
+            // IMPORTANT: Inverser Y car Bevy utilise Y=0 en bas
+            let bevy_y = window.height() - adjusted_pos.y - adjusted_size.y;
 
             commands.spawn((
                 Camera {
                     viewport: Some(bevy::render::camera::Viewport {
-                        physical_position: UVec2::new(adjusted_pos.x as u32, adjusted_pos.y as u32),
+                        physical_position: UVec2::new(adjusted_pos.x as u32, bevy_y as u32),
                         physical_size: UVec2::new(adjusted_size.x as u32, adjusted_size.y as u32),
                         ..default()
                     }),
@@ -121,27 +120,33 @@ pub fn update_viewports(
                 Camera3d::default(),
                 Transform::from_xyz(500.0, 500.0, 500.0).looking_at(Vec3::ZERO, Vec3::Y),
                 ViewportCamera { simulation_id: sim_id },
+                // Assigner le RenderLayer correspondant à la simulation
+                // Layer 0 est pour les objets partagés (grille, nourriture)
+                // Layer sim_id + 1 est pour la simulation spécifique
+                RenderLayers::from_layers(&[0, sim_id + 1]),
             ));
         }
     }
 }
 
-/// Filtre la visibilité des particules selon les simulations sélectionnées
-pub fn filter_particle_visibility(
-    ui_state: Res<ForceMatrixUI>,
-    simulations: Query<(&crate::components::simulation::SimulationId, &Children), With<crate::components::simulation::Simulation>>,
-    mut particles: Query<&mut Visibility, With<crate::components::particle::Particle>>,
+/// Assigne les RenderLayers aux simulations et particules
+pub fn assign_render_layers(
+    mut commands: Commands,
+    simulations: Query<(Entity, &crate::components::simulation::SimulationId, &Children), With<crate::components::simulation::Simulation>>,
+    particles: Query<Entity, With<crate::components::particle::Particle>>,
 ) {
-    for (sim_id, children) in simulations.iter() {
-        let should_be_visible = ui_state.selected_simulations.contains(&sim_id.0);
+    for (sim_entity, sim_id, children) in simulations.iter() {
+        // Assigner le layer à la simulation
+        commands.entity(sim_entity).insert(
+            RenderLayers::layer(sim_id.0 + 1)
+        );
 
+        // Assigner le même layer à toutes les particules enfants
         for child in children.iter() {
-            if let Ok(mut visibility) = particles.get_mut(child) {
-                *visibility = if should_be_visible {
-                    Visibility::Visible
-                } else {
-                    Visibility::Hidden
-                };
+            if particles.get(child).is_ok() {
+                commands.entity(child).insert(
+                    RenderLayers::layer(sim_id.0 + 1)
+                );
             }
         }
     }
@@ -160,7 +165,7 @@ pub fn draw_viewport_borders(
         return;
     }
 
-    let color = Color::srgb(0.3, 0.3, 0.3);
+    let color = Color::srgb(0.5, 0.5, 0.5);
 
     match selected_count {
         2 => {

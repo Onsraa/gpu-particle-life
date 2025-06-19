@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::render::view::RenderLayers;
 use rand::Rng;
 
 use crate::components::{
@@ -43,7 +44,7 @@ pub fn spawn_simulations_with_particles(
             materials.add(StandardMaterial {
                 base_color,
                 emissive,
-                unlit: true, // Pas d'éclairage, juste émissive
+                unlit: true,
                 ..default()
             })
         })
@@ -53,9 +54,15 @@ pub fn spawn_simulations_with_particles(
     for sim_id in 0..simulation_params.simulation_count {
         let genotype = Genotype::random(particle_config.type_count);
 
-        // Spawn la simulation
+        // Spawn la simulation avec son RenderLayer
         commands
-            .spawn((Simulation, SimulationId(sim_id), genotype))
+            .spawn((
+                Simulation,
+                SimulationId(sim_id),
+                genotype,
+                // Assigner le RenderLayer à la simulation (layer sim_id + 1)
+                RenderLayers::layer(sim_id + 1),
+            ))
             .with_children(|parent| {
                 // Spawn toutes les particules comme enfants
                 for particle_type in 0..particle_config.type_count {
@@ -71,6 +78,9 @@ pub fn spawn_simulations_with_particles(
                             Transform::from_translation(position),
                             Mesh3d(particle_mesh.clone()),
                             MeshMaterial3d(particle_materials[particle_type].clone()),
+                            // Les particules héritent automatiquement du RenderLayer du parent
+                            // mais on peut l'expliciter
+                            RenderLayers::layer(sim_id + 1),
                         ));
                     }
                 }
@@ -135,6 +145,8 @@ pub fn spawn_food(
             Transform::from_translation(position),
             Mesh3d(food_mesh.clone()),
             MeshMaterial3d(food_material.clone()),
+            // Layer 0 pour être visible par toutes les caméras
+            RenderLayers::layer(0),
         ));
     }
 }

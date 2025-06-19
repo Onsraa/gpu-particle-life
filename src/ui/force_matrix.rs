@@ -22,12 +22,15 @@ pub struct ForceMatrixUI {
 
 impl Default for ForceMatrixUI {
     fn default() -> Self {
+        let mut selected_simulations = HashSet::new();
+        selected_simulations.insert(0);
+
         Self {
             selected_simulation: 0,
             show_window: false,
             show_settings: false,
             show_simulations_list: true,
-            selected_simulations: HashSet::new(),
+            selected_simulations,
         }
     }
 }
