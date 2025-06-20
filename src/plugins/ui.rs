@@ -1,6 +1,6 @@
-// src/plugins/ui.rs
 use crate::systems::viewport_manager::{
     UISpace, assign_render_layers, draw_viewport_borders, update_viewports,
+    force_viewport_update_after_startup, delayed_viewport_update,
 };
 use crate::ui::force_matrix::{ForceMatrixUI, force_matrix_ui, simulations_list_ui};
 use bevy::prelude::*;
@@ -15,6 +15,15 @@ impl Plugin for UIPlugin {
         });
         app.init_resource::<ForceMatrixUI>();
         app.init_resource::<UISpace>();
+
+        // Système pour forcer la mise à jour des viewports après le démarrage
+        app.add_systems(Startup, force_viewport_update_after_startup);
+
+        // Système de mise à jour retardée (s'exécute une fois après 0.5 secondes)
+        app.add_systems(Update, delayed_viewport_update);
+
+        // Système de debug pour les viewports
+        app.add_systems(Update, crate::systems::viewport_debug::debug_window_and_viewports);
 
         // Systèmes d'assignation des render layers
         app.add_systems(

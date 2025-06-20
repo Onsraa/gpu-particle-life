@@ -7,3 +7,4 @@ pub mod spatial_grid;
 pub mod debug_particles;
 pub mod visual_highlight;
 pub mod viewport_manager;
+pub mod viewport_debug;

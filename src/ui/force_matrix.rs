@@ -144,11 +144,30 @@ pub fn simulations_list_ui(
 pub fn force_matrix_ui(
     mut contexts: EguiContexts,
     mut ui_state: ResMut<ForceMatrixUI>,
+    mut ui_space: ResMut<UISpace>,
     particle_config: Res<ParticleTypesConfig>,
     mut simulations: Query<(&SimulationId, &mut Genotype, &Transform), With<Simulation>>,
     mut boundary_mode: ResMut<BoundaryMode>,
 ) {
     let ctx = contexts.ctx_mut();
+
+    // Menu pour toggle les fenêtres
+    let top_panel_response = egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+        ui.horizontal(|ui| {
+            if ui.button("Simulations").clicked() {
+                ui_state.show_simulations_list = !ui_state.show_simulations_list;
+            }
+            if ui.button("Matrice des Forces").clicked() {
+                ui_state.show_window = !ui_state.show_window;
+            }
+            if ui.button("Paramètres").clicked() {
+                ui_state.show_settings = !ui_state.show_settings;
+            }
+        });
+    });
+
+    // Stocker la hauteur du panneau du haut
+    ui_space.top_panel_height = top_panel_response.response.rect.height();
 
     // Fenêtre des paramètres
     if ui_state.show_settings {
