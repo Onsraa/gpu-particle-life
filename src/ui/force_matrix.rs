@@ -150,21 +150,6 @@ pub fn force_matrix_ui(
 ) {
     let ctx = contexts.ctx_mut();
 
-    // Menu pour toggle les fenêtres
-    egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-        ui.horizontal(|ui| {
-            if ui.button("Simulations").clicked() {
-                ui_state.show_simulations_list = !ui_state.show_simulations_list;
-            }
-            if ui.button("Matrice des Forces").clicked() {
-                ui_state.show_window = !ui_state.show_window;
-            }
-            if ui.button("Paramètres").clicked() {
-                ui_state.show_settings = !ui_state.show_settings;
-            }
-        });
-    });
-
     // Fenêtre des paramètres
     if ui_state.show_settings {
         egui::Window::new("Paramètres")

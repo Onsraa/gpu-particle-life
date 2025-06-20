@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy::render::view::RenderLayers;
+use bevy::render::camera::{ClearColorConfig};
 use crate::ui::force_matrix::ForceMatrixUI;
 
 /// Marqueur pour les caméras des viewports
@@ -147,22 +148,16 @@ pub fn update_viewports(
     for (idx, &sim_id) in selected_sims.iter().enumerate() {
         if let Some((position, size)) = viewports.get(idx) {
             // Vérifier que les dimensions sont valides
-            if size.x <= 4.0 || size.y <= 4.0 {
+            if size.x <= 1.0 || size.y <= 1.0 {
                 continue;
             }
 
-            // Ajuster pour les bordures (2 pixels de marge)
-            let adjusted_pos = *position + Vec2::splat(2.0);
-            let adjusted_size = *size - Vec2::splat(4.0);
-
+            // PAS de marges - on utilise les dimensions complètes
+            let physical_x = position.x.round() as u32;
             // IMPORTANT: Inverser Y car Bevy utilise Y=0 en bas
-            let bevy_y = window.height() - adjusted_pos.y - adjusted_size.y;
-
-            // S'assurer que les valeurs sont valides pour un u32
-            let physical_x = (adjusted_pos.x.max(0.0) as u32).min(window.width() as u32);
-            let physical_y = (bevy_y.max(0.0) as u32).min(window.height() as u32);
-            let physical_width = (adjusted_size.x.max(1.0) as u32).min(window.width() as u32 - physical_x);
-            let physical_height = (adjusted_size.y.max(1.0) as u32).min(window.height() as u32 - physical_y);
+            let physical_y = (window.height() - position.y - size.y).round() as u32;
+            let physical_width = size.x.round() as u32;
+            let physical_height = size.y.round() as u32;
 
             if let Some(camera_entity) = cameras_to_reuse.pop() {
                 // Réutiliser une caméra existante
@@ -174,6 +169,7 @@ pub fn update_viewports(
                         ..default()
                     });
                     camera.order = idx as isize;
+                    camera.clear_color = ClearColorConfig::Custom(Color::srgb(0.1, 0.1, 0.1));
 
                     *transform = Transform::from_xyz(camera_distance, camera_distance, camera_distance)
                         .looking_at(Vec3::ZERO, Vec3::Y);
@@ -192,6 +188,7 @@ pub fn update_viewports(
                             ..default()
                         }),
                         order: idx as isize,
+                        clear_color: ClearColorConfig::Custom(Color::srgb(0.1, 0.1, 0.1)),
                         ..default()
                     },
                     Camera3d::default(),
