@@ -19,7 +19,11 @@ use crate::resources::{
 #[derive(Resource, Clone)]
 pub struct FoodPositions(pub Vec<Vec3>);
 
-/// Spawn toutes les simulations avec leurs particules
+/// Marqueur pour indiquer que les entités ont déjà été créées
+#[derive(Resource, Default)]
+pub struct EntitiesSpawned(pub bool);
+
+/// Spawn toutes les simulations avec leurs particules (première fois uniquement)
 pub fn spawn_simulations_with_particles(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -27,7 +31,15 @@ pub fn spawn_simulations_with_particles(
     grid: Res<GridParameters>,
     particle_config: Res<ParticleTypesConfig>,
     simulation_params: Res<SimulationParameters>,
+    mut entities_spawned: ResMut<EntitiesSpawned>,
+    // Query pour vérifier si des entités existent déjà
+    existing_simulations: Query<Entity, With<Simulation>>,
 ) {
+    // Si les entités ont déjà été créées, on ne fait rien
+    if entities_spawned.0 || !existing_simulations.is_empty() {
+        return;
+    }
+
     let mut rng = rand::rng();
 
     // Créer un mesh partagé pour toutes les particules
@@ -51,6 +63,17 @@ pub fn spawn_simulations_with_particles(
         })
         .collect();
 
+    // Générer les positions initiales pour toutes les particules
+    // Ces positions seront les mêmes pour toutes les simulations
+    let particles_per_type = simulation_params.particle_count / particle_config.type_count;
+    let mut initial_positions = Vec::new();
+
+    for particle_type in 0..particle_config.type_count {
+        for _ in 0..particles_per_type {
+            initial_positions.push((particle_type, random_position_in_grid(&grid, &mut rng)));
+        }
+    }
+
     // Pour chaque simulation
     for sim_id in 0..simulation_params.simulation_count {
         let genotype = Genotype::random(particle_config.type_count);
@@ -61,44 +84,47 @@ pub fn spawn_simulations_with_particles(
                 Simulation,
                 SimulationId(sim_id),
                 genotype,
-                Score::default(), // Ajouter le score
+                Score::default(),
                 // Assigner le RenderLayer à la simulation (layer sim_id + 1)
                 RenderLayers::layer(sim_id + 1),
             ))
             .with_children(|parent| {
-                // Spawn toutes les particules comme enfants
-                for particle_type in 0..particle_config.type_count {
-                    let particles_per_type =
-                        simulation_params.particle_count / particle_config.type_count;
-
-                    for _ in 0..particles_per_type {
-                        let position = random_position_in_grid(&grid, &mut rng);
-
-                        parent.spawn((
-                            Particle,
-                            ParticleType(particle_type),
-                            Transform::from_translation(position),
-                            Mesh3d(particle_mesh.clone()),
-                            MeshMaterial3d(particle_materials[particle_type].clone()),
-                            // Les particules héritent automatiquement du RenderLayer du parent
-                            // mais on peut l'expliciter
-                            RenderLayers::layer(sim_id + 1),
-                        ));
-                    }
+                // Spawn toutes les particules comme enfants avec les positions communes
+                for (particle_type, position) in &initial_positions {
+                    parent.spawn((
+                        Particle,
+                        ParticleType(*particle_type),
+                        Transform::from_translation(*position),
+                        Mesh3d(particle_mesh.clone()),
+                        MeshMaterial3d(particle_materials[*particle_type].clone()),
+                        // Les particules héritent automatiquement du RenderLayer du parent
+                        RenderLayers::layer(sim_id + 1),
+                    ));
                 }
             });
     }
+
+    // Marquer que les entités ont été créées
+    entities_spawned.0 = true;
+    info!("Création initiale des {} simulations avec {} particules chacune", 
+          simulation_params.simulation_count, 
+          simulation_params.particle_count);
 }
 
-/// Spawn la nourriture en réutilisant les positions si elles existent
+/// Spawn la nourriture (première fois uniquement)
 pub fn spawn_food(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     grid: Res<GridParameters>,
     food_params: Res<FoodParameters>,
-    existing_positions: Option<Res<FoodPositions>>,
+    existing_food: Query<Entity, With<Food>>,
 ) {
+    // Si la nourriture existe déjà, on ne fait rien
+    if !existing_food.is_empty() {
+        return;
+    }
+
     let mut rng = rand::rng();
 
     // Mesh partagé pour toute la nourriture
@@ -117,17 +143,13 @@ pub fn spawn_food(
         ..default()
     });
 
-    // Utiliser les positions existantes ou en générer de nouvelles
-    let food_positions = if let Some(existing) = existing_positions {
-        existing.0.clone()
-    } else {
-        let new_positions: Vec<Vec3> = (0..food_params.food_count)
-            .map(|_| random_position_in_grid(&grid, &mut rng))
-            .collect();
+    // Générer les positions initiales
+    let food_positions: Vec<Vec3> = (0..food_params.food_count)
+        .map(|_| random_position_in_grid(&grid, &mut rng))
+        .collect();
 
-        commands.insert_resource(FoodPositions(new_positions.clone()));
-        new_positions
-    };
+    // Sauvegarder les positions
+    commands.insert_resource(FoodPositions(food_positions.clone()));
 
     // Spawn la nourriture
     for position in food_positions {
@@ -151,6 +173,8 @@ pub fn spawn_food(
             RenderLayers::layer(0),
         ));
     }
+
+    info!("Création initiale de {} nourritures", food_params.food_count);
 }
 
 /// Génère une position aléatoire dans la grille

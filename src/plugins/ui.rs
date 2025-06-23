@@ -2,9 +2,11 @@ use crate::systems::viewport_manager::{
     UISpace, assign_render_layers, draw_viewport_borders, update_viewports,
     force_viewport_update_after_startup, delayed_viewport_update,
 };
-use crate::ui::force_matrix::{ForceMatrixUI, force_matrix_ui, simulations_list_ui};
+use crate::ui::force_matrix::{ForceMatrixUI, force_matrix_window, simulations_list_ui, speed_control_ui};
+use crate::ui::main_menu::{MenuConfig, main_menu_ui};
 use bevy::prelude::*;
 use bevy_egui::{EguiContextPass, EguiPlugin};
+use crate::states::app::AppState;
 
 pub struct UIPlugin;
 
@@ -13,8 +15,11 @@ impl Plugin for UIPlugin {
         app.add_plugins(EguiPlugin {
             enable_multipass_for_primary_context: true,
         });
+
+        // Resources
         app.init_resource::<ForceMatrixUI>();
         app.init_resource::<UISpace>();
+        app.init_resource::<MenuConfig>();
 
         // Système pour forcer la mise à jour des viewports après le démarrage
         app.add_systems(Startup, force_viewport_update_after_startup);
@@ -30,22 +35,31 @@ impl Plugin for UIPlugin {
             Update,
             assign_render_layers
                 .run_if(resource_exists::<ForceMatrixUI>)
-                .run_if(resource_exists::<UISpace>),
+                .run_if(resource_exists::<UISpace>)
+                .run_if(in_state(AppState::Simulation)),
         );
 
-        // Systèmes UI et viewport
+        // Systèmes UI du menu principal
+        app.add_systems(
+            EguiContextPass,
+            main_menu_ui.run_if(in_state(AppState::MainMenu)),
+        );
+
+        // Systèmes UI et viewport pour la simulation
         app.add_systems(
             EguiContextPass,
             (
-                // D'abord les UI qui peuvent modifier l'état
-                (force_matrix_ui, simulations_list_ui),
-                // Ensuite la mise à jour des viewports
+                // Contrôles de vitesse
+                speed_control_ui,
+                // UI des simulations
+                (simulations_list_ui, force_matrix_window),
+                // Mise à jour des viewports
                 update_viewports
-                    .after(force_matrix_ui)
-                    .after(simulations_list_ui),
-                // Enfin le dessin des bordures
+                    .after(simulations_list_ui)
+                    .after(force_matrix_window),
+                // Dessin des bordures
                 draw_viewport_borders.after(update_viewports),
-            ),
+            ).run_if(in_state(AppState::Simulation)),
         );
     }
 }

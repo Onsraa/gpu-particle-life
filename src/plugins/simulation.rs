@@ -1,14 +1,15 @@
-use bevy::prelude::*;
-
+use crate::states::app::AppState;
 use crate::states::simulation::SimulationState;
 use crate::systems::debug_particles::debug_particle_movement;
 use crate::systems::{
     collision::detect_food_collision,
     debug::debug_scores,
     movement::{apply_movement, calculate_forces},
+    reset::reset_for_new_epoch,
     spatial_grid::{SpatialGrid, update_spatial_grid},
-    spawning::{spawn_food, spawn_simulations_with_particles},
+    spawning::{EntitiesSpawned, spawn_food, spawn_simulations_with_particles},
 };
+use bevy::prelude::*;
 
 pub struct SimulationPlugin;
 
@@ -17,23 +18,40 @@ impl Plugin for SimulationPlugin {
         app
             // État de la simulation
             .init_state::<SimulationState>()
-            // Ressource pour la grille spatiale
+            // Ressources
             .init_resource::<SpatialGrid>()
-            // Systèmes de démarrage (une seule fois au début de l'époque)
+            .init_resource::<EntitiesSpawned>()
+            // Transition vers l'état de simulation
+            .add_systems(
+                OnEnter(AppState::Simulation),
+                |mut next_state: ResMut<NextState<SimulationState>>| {
+                    next_state.set(SimulationState::Starting);
+                },
+            )
+            // Systèmes de démarrage
             .add_systems(
                 OnEnter(SimulationState::Starting),
-                (spawn_simulations_with_particles, spawn_food).chain(),
+                (
+                    // Spawn initial (ne se fait qu'une fois)
+                    spawn_simulations_with_particles,
+                    spawn_food,
+                    // Reset pour les époques suivantes
+                    reset_for_new_epoch,
+                )
+                    .chain(),
             )
             // Transition automatique vers Running
             .add_systems(
                 Update,
-                transition_to_running.run_if(in_state(SimulationState::Starting)),
+                transition_to_running
+                    .run_if(in_state(SimulationState::Starting))
+                    .run_if(in_state(AppState::Simulation)),
             )
             // Systèmes de simulation
             .add_systems(
                 Update,
                 (
-                    update_spatial_grid, 
+                    update_spatial_grid,
                     calculate_forces,
                     apply_movement,
                     detect_food_collision,
@@ -42,12 +60,17 @@ impl Plugin for SimulationPlugin {
                     debug_particle_movement,
                 )
                     .chain()
-                    .run_if(in_state(SimulationState::Running)),
+                    .run_if(in_state(SimulationState::Running))
+                    .run_if(in_state(AppState::Simulation)),
             )
             // Système de pause
-            .add_systems(Update, handle_pause_input)
-            // Nettoyage en sortie d'époque
-            .add_systems(OnExit(SimulationState::Running), cleanup_epoch);
+            .add_systems(
+                Update,
+                handle_pause_input.run_if(in_state(AppState::Simulation)),
+            )
+            // Plus besoin de cleanup à chaque époque !
+            // Seulement quand on quitte complètement la simulation
+            .add_systems(OnExit(AppState::Simulation), cleanup_all);
     }
 }
 
@@ -95,21 +118,31 @@ fn handle_pause_input(
     }
 }
 
-/// Nettoie toutes les entités de la simulation précédente
-fn cleanup_epoch(
+/// Nettoie tout quand on quitte la simulation complètement
+fn cleanup_all(
     mut commands: Commands,
     simulations: Query<Entity, With<crate::components::simulation::Simulation>>,
     food: Query<Entity, With<crate::components::food::Food>>,
+    cameras: Query<Entity, With<crate::systems::viewport_manager::ViewportCamera>>,
+    mut entities_spawned: ResMut<EntitiesSpawned>,
 ) {
-    // Supprimer toutes les simulations (et leurs enfants automatiquement)
+    // Supprimer toutes les simulations et leurs particules
     for entity in simulations.iter() {
-        commands.entity(entity).despawn();
+        commands.entity(entity).despawn_recursive();
     }
 
     // Supprimer toute la nourriture
     for entity in food.iter() {
-        commands.entity(entity).despawn();
+        commands.entity(entity).despawn_recursive();
     }
 
-    info!("Nettoyage de l'époque terminé");
+    // Supprimer les caméras de viewport
+    for entity in cameras.iter() {
+        commands.entity(entity).despawn_recursive();
+    }
+
+    // Réinitialiser le flag
+    entities_spawned.0 = false;
+
+    info!("Nettoyage complet de la simulation");
 }

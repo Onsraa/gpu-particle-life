@@ -1,30 +1,25 @@
 use bevy::prelude::*;
 use bevy::render::view::RenderLayers;
-
-use crate::resources::{
-    grid::GridParameters,
-    simulation::SimulationParameters,
-    particle_types::ParticleTypesConfig,
-    food::FoodParameters,
-};
-use crate::resources::boundary::BoundaryMode;
+use crate::resources::food::FoodParameters;
+use crate::resources::grid::GridParameters;
+use crate::resources::particle_types::ParticleTypesConfig;
+use crate::resources::simulation::SimulationParameters;
+use crate::states::app::AppState;
 
 pub struct SetupPlugin;
 
 impl Plugin for SetupPlugin {
     fn build(&self, app: &mut App) {
+        app.init_state::<AppState>();
+        app.init_resource::<GridParameters>();
+        app.init_resource::<ParticleTypesConfig>();
+        app.init_resource::<SimulationParameters>();
+        app.init_resource::<FoodParameters>();
         app
-            // Initialiser toutes les ressources
-            .init_resource::<GridParameters>()
-            .init_resource::<SimulationParameters>()
-            .init_resource::<ParticleTypesConfig>()
-            .init_resource::<FoodParameters>()
-            .init_resource::<BoundaryMode>()
-
-            // Systèmes de setup
-            .add_systems(Startup, (
-                setup_grid_visualization,
-            ));
+            // Systèmes de setup uniquement quand on entre dans la simulation
+            .add_systems(OnEnter(AppState::Simulation), setup_grid_visualization)
+            // Nettoyage quand on quitte la simulation
+            .add_systems(OnExit(AppState::Simulation), cleanup_grid_visualization);
     }
 }
 
@@ -49,5 +44,19 @@ fn setup_grid_visualization(
         Transform::from_translation(Vec3::ZERO),
         // Layer 0 pour être visible par toutes les caméras
         RenderLayers::layer(0),
+        GridVisualization, // Marqueur pour le nettoyage
     ));
+}
+
+/// Marqueur pour la visualisation de la grille
+#[derive(Component)]
+struct GridVisualization;
+
+fn cleanup_grid_visualization(
+    mut commands: Commands,
+    grid_viz: Query<Entity, With<GridVisualization>>,
+) {
+    for entity in grid_viz.iter() {
+        commands.entity(entity).despawn_recursive();
+    }
 }

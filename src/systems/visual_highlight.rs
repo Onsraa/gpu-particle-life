@@ -1,6 +1,6 @@
-use bevy::prelude::*;
 use crate::components::simulation::{Simulation, SimulationId};
 use crate::ui::force_matrix::ForceMatrixUI;
+use bevy::prelude::*;
 
 /// Système pour mettre en évidence visuellement la simulation sélectionnée
 pub fn highlight_selected_simulation(
@@ -10,7 +10,7 @@ pub fn highlight_selected_simulation(
 ) {
     // Parcourir toutes les simulations
     for (sim_id, children) in simulations.iter_mut() {
-        let is_selected = sim_id.0 == ui_state.selected_simulation;
+        let is_selected = sim_id.0 == ui_state.selected_simulation.unwrap();
 
         // Appliquer un effet visuel aux particules de la simulation
         for child in children.iter() {

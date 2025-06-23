@@ -4,13 +4,14 @@ use crate::components::{
     genotype::Genotype,
     particle::{Particle, ParticleType, Velocity},
     simulation::{Simulation, SimulationId},
+    food::Food,
 };
 use crate::globals::*;
 use crate::resources::boundary::BoundaryMode;
 use crate::resources::{grid::GridParameters, simulation::SimulationParameters};
 use crate::systems::spatial_grid::SpatialGrid;
 
-/// Calcule les forces entre particules en utilisant la grille spatiale
+/// Calcule les forces entre particules et avec la nourriture
 pub fn calculate_forces(
     time: Res<Time>,
     sim_params: Res<SimulationParameters>,
@@ -20,6 +21,7 @@ pub fn calculate_forces(
         (Entity, &Transform, &mut Velocity, &ParticleType, &ChildOf),
         With<Particle>,
     >,
+    food_query: Query<(&Transform, &ViewVisibility), With<Food>>,
 ) {
     // Skip si en pause
     if sim_params.simulation_speed == crate::resources::simulation::SimulationSpeed::Paused {
@@ -33,6 +35,13 @@ pub fn calculate_forces(
     for (sim_id, genotype) in simulations.iter() {
         genotypes_cache.insert(sim_id.0, *genotype);
     }
+
+    // Collecter les positions de nourriture visible
+    let food_positions: Vec<Vec3> = food_query
+        .iter()
+        .filter(|(_, visibility)| visibility.get())
+        .map(|(transform, _)| transform.translation)
+        .collect();
 
     // Collecter les données nécessaires pour éviter les conflits
     let particle_data: Vec<_> = particles
@@ -52,6 +61,7 @@ pub fn calculate_forces(
         let mut total_force = Vec3::ZERO;
 
         if let Some(genotype) = genotypes_cache.get(sim_id_a) {
+            // === FORCES AVEC LES AUTRES PARTICULES ===
             // Utiliser la grille spatiale pour trouver les voisins
             let neighbors = spatial_grid.get_potential_neighbors(*pos_a, *sim_id_a);
 
@@ -89,6 +99,29 @@ pub fn calculate_forces(
                     let force_magnitude = genetic_force * distance_factor;
 
                     total_force += force_direction * force_magnitude;
+                }
+            }
+
+            // === FORCES AVEC LA NOURRITURE ===
+            let food_force = genotype.decode_food_force(*type_a);
+
+            // Si la force de nourriture n'est pas nulle, calculer l'interaction
+            if food_force.abs() > 0.001 {
+                for food_pos in &food_positions {
+                    let distance_vec = *food_pos - *pos_a;
+                    let distance = distance_vec.length();
+
+                    // Appliquer la force si dans la portée
+                    if distance > 0.001 && distance < sim_params.max_force_range {
+                        let force_direction = distance_vec.normalize();
+
+                        // Atténuation en fonction de la distance
+                        // Plus douce que pour les particules pour un effet plus naturel
+                        let distance_factor = ((FOOD_RADIUS * 2.0) / distance).min(1.0).powf(0.5);
+                        let force_magnitude = food_force * distance_factor;
+
+                        total_force += force_direction * force_magnitude;
+                    }
                 }
             }
         }

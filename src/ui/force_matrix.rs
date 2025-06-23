@@ -8,15 +8,14 @@ use crate::components::{
     score::Score,
 };
 use crate::resources::particle_types::ParticleTypesConfig;
-use crate::resources::boundary::BoundaryMode;
+use crate::resources::simulation::{SimulationParameters, SimulationSpeed};
 use crate::systems::viewport_manager::UISpace;
 
 /// Ressource pour stocker l'état de l'UI
 #[derive(Resource)]
 pub struct ForceMatrixUI {
-    pub selected_simulation: usize,
-    pub show_window: bool,
-    pub show_settings: bool,
+    pub selected_simulation: Option<usize>,
+    pub show_matrix_window: bool,
     pub show_simulations_list: bool,
     pub selected_simulations: HashSet<usize>, // Simulations à afficher
 }
@@ -27,9 +26,8 @@ impl Default for ForceMatrixUI {
         selected_simulations.insert(0); // Sélectionner la première simulation par défaut
 
         Self {
-            selected_simulation: 0,
-            show_window: false,
-            show_settings: false,
+            selected_simulation: None,
+            show_matrix_window: false,
             show_simulations_list: true,
             selected_simulations,
         }
@@ -41,7 +39,7 @@ pub fn simulations_list_ui(
     mut contexts: EguiContexts,
     mut ui_state: ResMut<ForceMatrixUI>,
     mut ui_space: ResMut<UISpace>,
-    simulations: Query<(&SimulationId, &Score), With<Simulation>>,
+    simulations: Query<(&SimulationId, &Score, &Genotype), With<Simulation>>,
 ) {
     let ctx = contexts.ctx_mut();
 
@@ -51,7 +49,7 @@ pub fn simulations_list_ui(
         return;
     }
 
-    let panel_width = 300.0; // Largeur fixe du panneau
+    let panel_width = 350.0; // Largeur fixe du panneau
 
     egui::SidePanel::right("simulations_panel")
         .exact_width(panel_width)
@@ -62,7 +60,7 @@ pub fn simulations_list_ui(
             // Boutons pour sélectionner/désélectionner toutes
             ui.horizontal(|ui| {
                 if ui.button("Tout sélectionner").clicked() {
-                    for (sim_id, _) in simulations.iter() {
+                    for (sim_id, _, _) in simulations.iter() {
                         ui_state.selected_simulations.insert(sim_id.0);
                     }
                 }
@@ -76,13 +74,16 @@ pub fn simulations_list_ui(
             // En-tête du tableau
             ui.horizontal(|ui| {
                 ui.add_space(5.0);
-                ui.label("Afficher");
+                ui.label("Vue");
                 ui.separator();
                 ui.add_space(5.0);
                 ui.label("Simulation");
                 ui.separator();
                 ui.add_space(5.0);
                 ui.label("Score");
+                ui.separator();
+                ui.add_space(5.0);
+                ui.label("Matrice");
             });
 
             ui.separator();
@@ -92,15 +93,22 @@ pub fn simulations_list_ui(
             sim_list.sort_by(|a, b| b.1.get().partial_cmp(&a.1.get()).unwrap()); // Trier par score décroissant
 
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for (sim_id, score) in sim_list {
+                for (sim_id, score, _genotype) in sim_list {
+                    let is_selected_for_matrix = ui_state.selected_simulation == Some(sim_id.0);
+
                     ui.horizontal(|ui| {
+                        // Style de sélection
+                        if is_selected_for_matrix {
+                            ui.visuals_mut().override_text_color = Some(egui::Color32::from_rgb(100, 200, 255));
+                        }
+
                         ui.add_space(10.0);
 
-                        let mut is_selected = ui_state.selected_simulations.contains(&sim_id.0);
+                        let mut is_selected_for_view = ui_state.selected_simulations.contains(&sim_id.0);
 
-                        // Checkbox
-                        if ui.checkbox(&mut is_selected, "").changed() {
-                            if is_selected {
+                        // Checkbox pour la vue
+                        if ui.checkbox(&mut is_selected_for_view, "").changed() {
+                            if is_selected_for_view {
                                 ui_state.selected_simulations.insert(sim_id.0);
                             } else {
                                 ui_state.selected_simulations.remove(&sim_id.0);
@@ -128,102 +136,132 @@ pub fn simulations_list_ui(
 
                         ui.label(egui::RichText::new(format!("{:.0}", score_value))
                             .color(score_color));
+
+                        ui.separator();
+                        ui.add_space(15.0);
+
+                        // Bouton pour voir la matrice
+                        if ui.small_button("Voir").clicked() {
+                            ui_state.selected_simulation = Some(sim_id.0);
+                            ui_state.show_matrix_window = true;
+                        }
                     });
+
+                    // Cliquer sur la ligne pour sélectionner
+                    let response = ui.interact(ui.min_rect(), ui.id().with(sim_id.0), egui::Sense::click());
+                    if response.clicked() {
+                        ui_state.selected_simulation = Some(sim_id.0);
+                        ui_state.show_matrix_window = true;
+                    }
                 }
             });
 
             ui.separator();
-            ui.label(format!("{} simulation(s) sélectionnée(s)", ui_state.selected_simulations.len()));
+            ui.label(format!("{} vue(s) active(s)", ui_state.selected_simulations.len()));
         });
 
     // Mettre à jour l'espace occupé par l'UI
     ui_space.right_panel_width = panel_width;
 }
 
-/// Système principal de l'UI (matrice des forces et paramètres)
-pub fn force_matrix_ui(
+/// Système pour afficher les contrôles de vitesse
+pub fn speed_control_ui(
     mut contexts: EguiContexts,
-    mut ui_state: ResMut<ForceMatrixUI>,
+    mut sim_params: ResMut<SimulationParameters>,
     mut ui_space: ResMut<UISpace>,
-    particle_config: Res<ParticleTypesConfig>,
-    mut simulations: Query<(&SimulationId, &mut Genotype, &Transform), With<Simulation>>,
-    mut boundary_mode: ResMut<BoundaryMode>,
+    time: Res<Time>,
 ) {
     let ctx = contexts.ctx_mut();
 
-    // Menu pour toggle les fenêtres
-    let top_panel_response = egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+    // Panneau du haut pour les contrôles
+    let top_panel_response = egui::TopBottomPanel::top("controls_bar").show(ctx, |ui| {
         ui.horizontal(|ui| {
-            if ui.button("Simulations").clicked() {
-                ui_state.show_simulations_list = !ui_state.show_simulations_list;
+            // Contrôles de vitesse
+            ui.label("Vitesse:");
+
+            if ui.selectable_label(
+                sim_params.simulation_speed == SimulationSpeed::Paused,
+                "⏸ Pause"
+            ).clicked() {
+                sim_params.simulation_speed = SimulationSpeed::Paused;
             }
-            if ui.button("Matrice des Forces").clicked() {
-                ui_state.show_window = !ui_state.show_window;
+
+            if ui.selectable_label(
+                sim_params.simulation_speed == SimulationSpeed::Normal,
+                "▶ Normal"
+            ).clicked() {
+                sim_params.simulation_speed = SimulationSpeed::Normal;
             }
-            if ui.button("Paramètres").clicked() {
-                ui_state.show_settings = !ui_state.show_settings;
+
+            if ui.selectable_label(
+                sim_params.simulation_speed == SimulationSpeed::Fast,
+                "⏩ Rapide (2x)"
+            ).clicked() {
+                sim_params.simulation_speed = SimulationSpeed::Fast;
             }
+
+            if ui.selectable_label(
+                sim_params.simulation_speed == SimulationSpeed::VeryFast,
+                "⏭ Très rapide (4x)"
+            ).clicked() {
+                sim_params.simulation_speed = SimulationSpeed::VeryFast;
+            }
+
+            ui.separator();
+
+            // Informations sur l'époque
+            let progress = sim_params.epoch_timer.fraction();
+            let remaining = sim_params.epoch_timer.remaining_secs();
+
+            ui.label(format!("Époque {}/{}", sim_params.current_epoch + 1, sim_params.max_epochs));
+
+            // Barre de progression
+            ui.add(egui::ProgressBar::new(progress)
+                .text(format!("{:.0}s restantes", remaining))
+                .desired_width(150.0));
+
+            ui.separator();
+
+            // FPS
+            let fps = 1.0 / time.delta_secs();
+            ui.label(format!("FPS: {:.0}", fps));
         });
     });
 
     // Stocker la hauteur du panneau du haut
     ui_space.top_panel_height = top_panel_response.response.rect.height();
+}
 
-    // Fenêtre des paramètres
-    if ui_state.show_settings {
-        egui::Window::new("Paramètres")
-            .resizable(true)
-            .show(ctx, |ui| {
-                ui.heading("Mode de bords");
-                ui.horizontal(|ui| {
-                    if ui.selectable_label(*boundary_mode == BoundaryMode::Bounce, "Rebond").clicked() {
-                        *boundary_mode = BoundaryMode::Bounce;
-                    }
-                    if ui.selectable_label(*boundary_mode == BoundaryMode::Teleport, "Téléportation").clicked() {
-                        *boundary_mode = BoundaryMode::Teleport;
-                    }
-                });
-
-                ui.separator();
-                ui.label("Le mode Rebond fait rebondir les particules sur les murs.");
-                ui.label("Le mode Téléportation les fait apparaître de l'autre côté.");
-            });
-    }
-
-    // Fenêtre matrice des forces
-    if !ui_state.show_window {
+/// Fenêtre de visualisation de la matrice (lecture seule)
+pub fn force_matrix_window(
+    mut contexts: EguiContexts,
+    mut ui_state: ResMut<ForceMatrixUI>,
+    particle_config: Res<ParticleTypesConfig>,
+    simulations: Query<(&SimulationId, &Genotype), With<Simulation>>,
+) {
+    if !ui_state.show_matrix_window || ui_state.selected_simulation.is_none() {
         return;
     }
 
-    egui::Window::new("Matrice des Forces")
+    let ctx = contexts.ctx_mut();
+    let selected_sim = ui_state.selected_simulation.unwrap();
+
+    egui::Window::new(format!("Matrice des Forces - Simulation #{}", selected_sim + 1))
         .resizable(true)
+        .collapsible(true)
+        .open(&mut ui_state.show_matrix_window)
         .show(ctx, |ui| {
-            // Sélection de la simulation avec visualisation
-            ui.horizontal(|ui| {
-                ui.label("Simulation:");
+            // Trouver la simulation sélectionnée
+            if let Some((_, genotype)) = simulations.iter()
+                .find(|(sim_id, _)| sim_id.0 == selected_sim) {
 
-                let sim_count = simulations.iter().count();
-
-                // Boutons pour changer de simulation
-                if ui.button("<").clicked() && ui_state.selected_simulation > 0 {
-                    ui_state.selected_simulation -= 1;
-                }
-
-                ui.label(format!("{}/{}", ui_state.selected_simulation + 1, sim_count));
-
-                if ui.button(">").clicked() && ui_state.selected_simulation < sim_count - 1 {
-                    ui_state.selected_simulation += 1;
-                }
-            });
-
-            ui.separator();
-
-            // Afficher et éditer la matrice
-            if let Some((_, mut genotype, _)) = simulations.iter_mut().nth(ui_state.selected_simulation) {
                 let type_count = particle_config.type_count;
 
                 ui.label(format!("Types de particules: {}", type_count));
                 ui.separator();
+
+                // === Matrice des forces particule-particule ===
+                ui.label(egui::RichText::new("Forces Particule-Particule").strong());
 
                 // En-têtes de colonnes
                 ui.horizontal(|ui| {
@@ -239,10 +277,7 @@ pub fn force_matrix_ui(
                     }
                 });
 
-                // Matrice avec sliders
-                let mut new_forces = vec![vec![0.0; type_count]; type_count];
-                let mut genome_changed = false;
-
+                // Matrice en lecture seule
                 for i in 0..type_count {
                     ui.horizontal(|ui| {
                         let (color, _) = particle_config.get_color_for_type(i);
@@ -254,98 +289,61 @@ pub fn force_matrix_ui(
                             )));
 
                         for j in 0..type_count {
-                            let mut force = genotype.decode_force(i, j);
+                            let force = genotype.decode_force(i, j);
 
-                            // Slider pour modifier la force
-                            let response = ui.add(
-                                egui::Slider::new(&mut force, -10.0..=10.0)
-                                    .fixed_decimals(1)
-                                    .custom_formatter(|n, _| {
-                                        if n > 0.0 { format!("+{:.1}", n) }
-                                        else { format!("{:.1}", n) }
-                                    })
-                            );
-
-                            if response.changed() {
-                                genome_changed = true;
-                                new_forces[i][j] = force;
+                            // Couleur selon la valeur de la force
+                            let color = if force > 0.0 {
+                                egui::Color32::from_rgb(0, 200, 0)
+                            } else if force < 0.0 {
+                                egui::Color32::from_rgb(200, 0, 0)
                             } else {
-                                new_forces[i][j] = force;
-                            }
+                                egui::Color32::GRAY
+                            };
+
+                            ui.label(egui::RichText::new(format!("{:+.1}", force))
+                                .color(color)
+                                .monospace());
                         }
                     });
                 }
 
-                // Si le génome a changé, encoder les nouvelles forces
-                if genome_changed {
-                    genotype.genome = encode_forces_to_genome(&new_forces, type_count);
-                }
-
                 ui.separator();
 
-                // Boutons d'actions
+                // === Forces de nourriture ===
+                ui.label(egui::RichText::new("Forces Nourriture → Particule").strong());
+
                 ui.horizontal(|ui| {
-                    if ui.button("Randomiser").clicked() {
-                        *genotype = Genotype::random(type_count);
-                    }
+                    for i in 0..type_count {
+                        let (color, _) = particle_config.get_color_for_type(i);
+                        let food_force = genotype.decode_food_force(i);
 
-                    if ui.button("Tout à zéro").clicked() {
-                        genotype.genome = 0;
-                    }
+                        let force_color = if food_force > 0.0 {
+                            egui::Color32::from_rgb(0, 200, 0)
+                        } else if food_force < 0.0 {
+                            egui::Color32::from_rgb(200, 0, 0)
+                        } else {
+                            egui::Color32::GRAY
+                        };
 
-                    if ui.button("Symétrique").clicked() {
-                        make_symmetric(&mut genotype);
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new(format!("Type {}", i))
+                                .color(egui::Color32::from_rgb(
+                                    (color.to_srgba().red * 255.0) as u8,
+                                    (color.to_srgba().green * 255.0) as u8,
+                                    (color.to_srgba().blue * 255.0) as u8,
+                                )));
+                            ui.label(egui::RichText::new(format!("{:+.1}", food_force))
+                                .color(force_color)
+                                .monospace());
+                        });
                     }
                 });
 
-                // Afficher le génome encodé
                 ui.separator();
-                ui.label(format!("Génome: 0x{:016X}", genotype.genome));
+
+                // Informations sur le génome
+                ui.label(format!("Génome principal: 0x{:016X}", genotype.genome));
+                ui.label(format!("Génome nourriture: 0x{:04X}", genotype.food_force_genome));
             }
         });
-}
-
-/// Encode une matrice de forces en génome
-fn encode_forces_to_genome(forces: &Vec<Vec<f32>>, type_count: usize) -> u64 {
-    let interactions = type_count * type_count;
-    let bits_per_interaction = 64 / interactions.max(1);
-    let max_value = (1u64 << bits_per_interaction) - 1;
-
-    let mut genome = 0u64;
-
-    for i in 0..type_count {
-        for j in 0..type_count {
-            let normalized = (forces[i][j] / crate::globals::FORCE_SCALE_FACTOR + 1.0) / 2.0;
-            let clamped = normalized.clamp(0.0, 1.0);
-            let raw_value = (clamped * max_value as f32) as u64;
-
-            let index = i * type_count + j;
-            let bit_start = index * bits_per_interaction;
-
-            genome |= raw_value << bit_start;
-        }
-    }
-
-    genome
-}
-
-fn make_symmetric(genotype: &mut Genotype) {
-    let type_count = genotype.type_count;
-    let mut forces = vec![vec![0.0; type_count]; type_count];
-
-    for i in 0..type_count {
-        for j in 0..type_count {
-            forces[i][j] = genotype.decode_force(i, j);
-        }
-    }
-
-    for i in 0..type_count {
-        for j in i+1..type_count {
-            let avg = (forces[i][j] + forces[j][i]) / 2.0;
-            forces[i][j] = avg;
-            forces[j][i] = avg;
-        }
-    }
-
-    genotype.genome = encode_forces_to_genome(&forces, type_count);
 }
