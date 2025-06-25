@@ -4,9 +4,9 @@ use crate::systems::viewport_manager::{
 };
 use crate::ui::force_matrix::{ForceMatrixUI, force_matrix_window, simulations_list_ui, speed_control_ui};
 use crate::ui::main_menu::{MenuConfig, main_menu_ui};
+use crate::states::app::AppState;
 use bevy::prelude::*;
 use bevy_egui::{EguiContextPass, EguiPlugin};
-use crate::states::app::AppState;
 
 pub struct UIPlugin;
 

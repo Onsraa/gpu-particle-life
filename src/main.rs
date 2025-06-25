@@ -13,11 +13,11 @@ mod ui;
 use crate::plugins::camera::CameraPlugin;
 use crate::plugins::ui::UIPlugin;
 use crate::states::app::AppState;
-use plugins::{setup::SetupPlugin, simulation::SimulationPlugin};
+use plugins::{setup::SetupPlugin, simulation::SimulationPlugin, compute::ParticleComputePlugin};
 
 fn main() {
     App::new()
-        // Plugins Bevy de base
+        // Plugins Bevy de base (DOIT être ajouté en premier)
         .add_plugins((
             DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
@@ -39,7 +39,16 @@ fn main() {
             LogDiagnosticsPlugin::default(),
             FrameTimeDiagnosticsPlugin::default(),
         ))
-        .add_plugins((SetupPlugin, SimulationPlugin, CameraPlugin, UIPlugin))
+        // État principal de l'application (APRÈS DefaultPlugins)
+        .init_state::<AppState>()
+        // Nos plugins personnalisés
+        .add_plugins((
+            SetupPlugin,
+            SimulationPlugin,
+            ParticleComputePlugin,
+            CameraPlugin,
+            UIPlugin,
+        ))
         .add_systems(Update, (make_visible, exit_game))
         .run();
 }
@@ -59,11 +68,9 @@ fn exit_game(
     if keyboard_input.just_pressed(KeyCode::Escape) {
         match state.get() {
             AppState::MainMenu => {
-                // Quitter l'application depuis le menu principal
                 app_exit_events.write(AppExit::Success);
             }
             AppState::Simulation => {
-                // Retourner au menu principal depuis la simulation
                 next_state.set(AppState::MainMenu);
             }
         }

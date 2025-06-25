@@ -1,8 +1,9 @@
 // Constantes
-const PARTICLE_RADIUS: f32 = 5.0;
-const MIN_DISTANCE: f32 = 10.0;
+const PARTICLE_RADIUS: f32 = 2.5;
+const FOOD_RADIUS: f32 = 1.0;
+const MIN_DISTANCE: f32 = 0.001;
 const PARTICLE_REPULSION_STRENGTH: f32 = 100.0;
-const FORCE_SCALE_FACTOR: f32 = 50.0;
+const FORCE_SCALE_FACTOR: f32 = 1000.0;
 const MAX_VELOCITY: f32 = 200.0;
 const PARTICLE_MASS: f32 = 1.0;
 const DAMPING: f32 = 0.99;
@@ -28,11 +29,19 @@ struct SimulationParams {
     boundary_mode: u32, // 0 = bounce, 1 = teleport
 }
 
+// Structure pour la nourriture
+struct Food {
+    position: vec3<f32>,
+    is_active: u32, // 1 si active, 0 si mangée
+}
+
 // Buffers
 @group(0) @binding(0) var<storage, read> particles_in: array<Particle>;
 @group(0) @binding(1) var<storage, read_write> particles_out: array<Particle>;
 @group(0) @binding(2) var<uniform> params: SimulationParams;
-@group(0) @binding(3) var<storage, read> genomes: array<u32>; // u64 split into 2 u32
+@group(0) @binding(3) var<storage, read> genomes: array<u32>; // [genome_low, genome_high, food_genome_low, padding] par simulation
+@group(0) @binding(4) var<storage, read> food_positions: array<Food>;
+@group(0) @binding(5) var<uniform> food_count: u32;
 
 // Décode une force depuis le génome
 fn decode_force(genome_low: u32, genome_high: u32, type_a: u32, type_b: u32, type_count: u32) -> f32 {
@@ -53,6 +62,27 @@ fn decode_force(genome_low: u32, genome_high: u32, type_a: u32, type_b: u32, typ
 
     // Normaliser entre -1 et 1
     let max_value = f32((1u << bits_per_interaction) - 1u);
+    let normalized = (f32(raw_value) / max_value) * 2.0 - 1.0;
+
+    return normalized * FORCE_SCALE_FACTOR;
+}
+
+// Décode la force de nourriture depuis le génome
+fn decode_food_force(food_genome: u32, particle_type: u32, type_count: u32) -> f32 {
+    // Les 16 bits du food_genome sont répartis entre les types
+    let bits_per_type = 16u / max(type_count, 1u);
+    let bit_start = particle_type * bits_per_type;
+
+    if (bit_start >= 16u) {
+        return 0.0;
+    }
+
+    // Extraire les bits
+    let mask = (1u << bits_per_type) - 1u;
+    let raw_value = (food_genome >> bit_start) & mask;
+
+    // Normaliser entre -1 et 1
+    let max_value = f32((1u << bits_per_type) - 1u);
     let normalized = (f32(raw_value) / max_value) * 2.0 - 1.0;
 
     return normalized * FORCE_SCALE_FACTOR;
@@ -122,11 +152,12 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var total_force = vec3<f32>(0.0, 0.0, 0.0);
 
     // Récupérer le génome de cette simulation
-    let genome_idx = particle.simulation_id * 2u;
+    let genome_idx = particle.simulation_id * 4u; // 4 u32 par simulation
     let genome_low = genomes[genome_idx];
     let genome_high = genomes[genome_idx + 1u];
+    let food_genome = genomes[genome_idx + 2u];
 
-    // Calculer les forces avec toutes les autres particules de la même simulation
+    // === Forces avec les autres particules ===
     for (var i = 0u; i < params.particle_count; i++) {
         if (i == index) {
             continue;
@@ -143,7 +174,7 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let distance = length(distance_vec);
 
         // Ignorer si trop loin
-        if (distance > params.max_force_range || distance < 0.001) {
+        if (distance > params.max_force_range || distance < MIN_DISTANCE) {
             continue;
         }
 
@@ -163,6 +194,34 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let distance_factor = min(PARTICLE_RADIUS / distance, 1.0);
             let force_magnitude = genetic_force * distance_factor;
             total_force += force_direction * force_magnitude;
+        }
+    }
+
+    // === Forces avec la nourriture ===
+    let particle_food_force = decode_food_force(food_genome, particle.particle_type, params.type_count);
+
+    if (abs(particle_food_force) > 0.001) {
+        for (var i = 0u; i < food_count; i++) {
+            let food = food_positions[i];
+
+            // Ignorer la nourriture inactive
+            if (food.is_active == 0u) {
+                continue;
+            }
+
+            let distance_vec = food.position - particle.position;
+            let distance = length(distance_vec);
+
+            // Appliquer la force si dans la portée
+            if (distance > MIN_DISTANCE && distance < params.max_force_range) {
+                let force_direction = normalize(distance_vec);
+
+                // Atténuation plus douce pour la nourriture
+                let distance_factor = pow(min((FOOD_RADIUS * 2.0) / distance, 1.0), 0.5);
+                let force_magnitude = particle_food_force * distance_factor;
+
+                total_force += force_direction * force_magnitude;
+            }
         }
     }
 

@@ -10,6 +10,7 @@ use crate::components::{
 use crate::resources::particle_types::ParticleTypesConfig;
 use crate::resources::simulation::{SimulationParameters, SimulationSpeed};
 use crate::systems::viewport_manager::UISpace;
+use crate::plugins::compute::ComputeEnabled;
 
 /// Ressource pour stocker l'état de l'UI
 #[derive(Resource)]
@@ -169,6 +170,7 @@ pub fn speed_control_ui(
     mut contexts: EguiContexts,
     mut sim_params: ResMut<SimulationParameters>,
     mut ui_space: ResMut<UISpace>,
+    mut compute_enabled: ResMut<ComputeEnabled>,
     time: Res<Time>,
 ) {
     let ctx = contexts.ctx_mut();
@@ -205,6 +207,19 @@ pub fn speed_control_ui(
                 "⏭ Très rapide (4x)"
             ).clicked() {
                 sim_params.simulation_speed = SimulationSpeed::VeryFast;
+            }
+
+            ui.separator();
+
+            // Toggle GPU
+            let gpu_text = if compute_enabled.0 { "🚀 GPU Activé" } else { "💻 CPU Only" };
+            if ui.selectable_label(compute_enabled.0, gpu_text).clicked() {
+                compute_enabled.0 = !compute_enabled.0;
+                if compute_enabled.0 {
+                    info!("Compute shader GPU activé");
+                } else {
+                    info!("Compute shader GPU désactivé - utilisation du CPU");
+                }
             }
 
             ui.separator();

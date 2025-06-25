@@ -1,15 +1,17 @@
-use crate::states::app::AppState;
+use bevy::prelude::*;
+
 use crate::states::simulation::SimulationState;
+use crate::states::app::AppState;
 use crate::systems::debug_particles::debug_particle_movement;
 use crate::systems::{
     collision::detect_food_collision,
     debug::debug_scores,
     movement::{apply_movement, calculate_forces},
-    reset::reset_for_new_epoch,
     spatial_grid::{SpatialGrid, update_spatial_grid},
-    spawning::{EntitiesSpawned, spawn_food, spawn_simulations_with_particles},
+    spawning::{spawn_food, spawn_simulations_with_particles, EntitiesSpawned},
+    reset::reset_for_new_epoch,
 };
-use bevy::prelude::*;
+use crate::plugins::compute::{ComputeEnabled, apply_compute_results};
 
 pub struct SimulationPlugin;
 
@@ -21,6 +23,7 @@ impl Plugin for SimulationPlugin {
             // Ressources
             .init_resource::<SpatialGrid>()
             .init_resource::<EntitiesSpawned>()
+
             // Transition vers l'état de simulation
             .add_systems(
                 OnEnter(AppState::Simulation),
@@ -28,6 +31,7 @@ impl Plugin for SimulationPlugin {
                     next_state.set(SimulationState::Starting);
                 },
             )
+
             // Systèmes de démarrage
             .add_systems(
                 OnEnter(SimulationState::Starting),
@@ -37,8 +41,7 @@ impl Plugin for SimulationPlugin {
                     spawn_food,
                     // Reset pour les époques suivantes
                     reset_for_new_epoch,
-                )
-                    .chain(),
+                ).chain(),
             )
             // Transition automatique vers Running
             .add_systems(
@@ -47,13 +50,31 @@ impl Plugin for SimulationPlugin {
                     .run_if(in_state(SimulationState::Starting))
                     .run_if(in_state(AppState::Simulation)),
             )
-            // Systèmes de simulation
+            // Systèmes de simulation CPU (si compute désactivé)
             .add_systems(
                 Update,
                 (
                     update_spatial_grid,
                     calculate_forces,
                     apply_movement,
+                )
+                    .chain()
+                    .run_if(in_state(SimulationState::Running))
+                    .run_if(in_state(AppState::Simulation))
+                    .run_if(compute_disabled),
+            )
+            // Système de simulation GPU (si compute activé)
+            .add_systems(
+                Update,
+                apply_compute_results
+                    .run_if(in_state(SimulationState::Running))
+                    .run_if(in_state(AppState::Simulation))
+                    .run_if(compute_enabled),
+            )
+            // Systèmes communs
+            .add_systems(
+                Update,
+                (
                     detect_food_collision,
                     check_epoch_end,
                     debug_scores,
@@ -66,12 +87,23 @@ impl Plugin for SimulationPlugin {
             // Système de pause
             .add_systems(
                 Update,
-                handle_pause_input.run_if(in_state(AppState::Simulation)),
+                handle_pause_input
+                    .run_if(in_state(AppState::Simulation))
             )
             // Plus besoin de cleanup à chaque époque !
             // Seulement quand on quitte complètement la simulation
             .add_systems(OnExit(AppState::Simulation), cleanup_all);
     }
+}
+
+/// Condition pour vérifier si le compute est activé
+fn compute_enabled(compute: Res<ComputeEnabled>) -> bool {
+    compute.0
+}
+
+/// Condition pour vérifier si le compute est désactivé
+fn compute_disabled(compute: Res<ComputeEnabled>) -> bool {
+    !compute.0
 }
 
 /// Transition automatique de Starting vers Running
@@ -128,17 +160,17 @@ fn cleanup_all(
 ) {
     // Supprimer toutes les simulations et leurs particules
     for entity in simulations.iter() {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).despawn();
     }
 
     // Supprimer toute la nourriture
     for entity in food.iter() {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).despawn();
     }
 
     // Supprimer les caméras de viewport
     for entity in cameras.iter() {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).despawn();
     }
 
     // Réinitialiser le flag

@@ -10,6 +10,7 @@ use crate::resources::{
 };
 use crate::states::app::AppState;
 use crate::globals::*;
+use crate::plugins::compute::ComputeEnabled;
 
 /// Configuration temporaire pour le menu
 #[derive(Resource)]
@@ -35,6 +36,9 @@ pub struct MenuConfig {
 
     // Mode de bords
     pub boundary_mode: BoundaryMode,
+
+    // GPU compute
+    pub use_gpu: bool,
 }
 
 impl Default for MenuConfig {
@@ -57,6 +61,7 @@ impl Default for MenuConfig {
             food_value: DEFAULT_FOOD_VALUE,
 
             boundary_mode: BoundaryMode::default(),
+            use_gpu: true, 
         }
     }
 }
@@ -205,6 +210,24 @@ pub fn main_menu_ui(
                 }
             });
 
+            ui.add_space(10.0);
+
+            // === Paramètres de performance ===
+            ui.group(|ui| {
+                ui.label(egui::RichText::new("Performance").size(16.0).strong());
+                ui.separator();
+
+                ui.checkbox(&mut menu_config.use_gpu, "Utiliser le GPU (Compute Shader)");
+
+                if menu_config.use_gpu {
+                    ui.label("🚀 Les calculs d'interactions seront effectués sur le GPU");
+                    ui.label("Recommandé pour plus de 500 particules");
+                } else {
+                    ui.label("💻 Les calculs seront effectués sur le CPU");
+                    ui.label("Plus flexible mais plus lent avec beaucoup de particules");
+                }
+            });
+
             ui.add_space(20.0);
 
             // === Boutons d'action ===
@@ -256,4 +279,6 @@ fn apply_configuration(commands: &mut Commands, config: &MenuConfig) {
     });
 
     commands.insert_resource(config.boundary_mode);
+
+    commands.insert_resource(ComputeEnabled(config.use_gpu));
 }

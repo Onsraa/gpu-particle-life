@@ -169,7 +169,6 @@ pub fn spawn_food(
             Transform::from_translation(position),
             Mesh3d(food_mesh.clone()),
             MeshMaterial3d(food_material.clone()),
-            // Layer 0 pour être visible par toutes les caméras
             RenderLayers::layer(0),
         ));
     }
