@@ -19,13 +19,13 @@ impl Plugin for SetupPlugin {
         app.init_resource::<ParticleTypesConfig>();
         app.init_resource::<SimulationParameters>();
         app.init_resource::<FoodParameters>();
+        app.init_resource::<BoundaryMode>();
+
         app
-            // Systèmes de setup uniquement quand on entre dans la simulation
             .add_systems(
                 OnEnter(AppState::Simulation),
                 setup_grid_visualization
             )
-            // Nettoyage quand on quitte la simulation
             .add_systems(
                 OnExit(AppState::Simulation),
                 cleanup_grid_visualization
@@ -52,9 +52,8 @@ fn setup_grid_visualization(
         Mesh3d(meshes.add(Cuboid::new(grid.width, grid.height, grid.depth))),
         MeshMaterial3d(grid_material),
         Transform::from_translation(Vec3::ZERO),
-        // Layer 0 pour être visible par toutes les caméras
         RenderLayers::layer(0),
-        GridVisualization, // Marqueur pour le nettoyage
+        GridVisualization,
     ));
 }
 
@@ -67,6 +66,6 @@ fn cleanup_grid_visualization(
     grid_viz: Query<Entity, With<GridVisualization>>,
 ) {
     for entity in grid_viz.iter() {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).despawn();
     }
 }

@@ -79,19 +79,24 @@ pub struct ComputeEnabled(pub bool);
 
 impl Plugin for ParticleComputePlugin {
     fn build(&self, app: &mut App) {
+        // Ressources pour le monde principal
         app.init_resource::<ComputeEnabled>()
             .init_resource::<SyncedComputeResults>()
             .add_plugins(ExtractResourcePlugin::<SyncedComputeResults>::default());
 
+        // Système d'extraction dans le monde principal
         app.add_systems(
             ExtractSchedule,
-            extract_particle_data,
+            extract_particle_data
+                .run_if(in_state(AppState::Simulation)),
         );
 
         let render_app = app.sub_app_mut(RenderApp);
         render_app
             .init_resource::<ExtractedParticleData>()
             .init_resource::<ComputeResultsBuffer>()
+            .init_resource::<GpuBuffersState>()
+            .init_resource::<SyncedComputeResults>()
             .add_systems(
                 Render,
                 (
@@ -139,152 +144,99 @@ pub struct SyncedComputeResults {
     pub data: Vec<(Entity, GpuParticle)>,
 }
 
+/// État persistant des buffers GPU
+#[derive(Resource, Default)]
+struct GpuBuffersState {
+    allocated_particles: usize,
+    allocated_simulations: usize,
+}
+
 /// Système pour extraire les données des particules du monde principal
 fn extract_particle_data(
-    mut commands: Commands,
-    main_world: Extract<&World>,
+    mut extracted_data: ResMut<ExtractedParticleData>,
+    compute_enabled: Extract<Res<ComputeEnabled>>,
+    sim_params: Extract<Res<SimulationParameters>>,
+    grid_params: Extract<Res<GridParameters>>,
+    boundary_mode: Extract<Res<BoundaryMode>>,
+    time: Extract<Res<Time>>,
+    // Queries pour extraire les données
+    particles_query: Extract<Query<(Entity, &Transform, &Velocity, &ParticleType, &ChildOf), With<Particle>>>,
+    simulations_query: Extract<Query<(&SimulationId, &Genotype), With<Simulation>>>,
+    food_query: Extract<Query<(&Transform, &ViewVisibility), With<Food>>>,
 ) {
-    let mut extracted_data = ExtractedParticleData::default();
+    // Réinitialiser les données extraites
+    extracted_data.particles.clear();
+    extracted_data.genomes.clear();
+    extracted_data.food_positions.clear();
 
-    // Vérifier si le compute est activé
-    let compute_enabled = main_world.get_resource::<ComputeEnabled>()
-        .map(|c| c.0)
-        .unwrap_or(false);
-
-    if !compute_enabled {
-        extracted_data.enabled = false;
-        info!("Compute disabled in extract_particle_data");
-        commands.insert_resource(extracted_data);
-        return;
-    }
-
-    // Récupérer les paramètres
-    let Some(sim_params) = main_world.get_resource::<SimulationParameters>() else {
-        extracted_data.enabled = false;
-        info!("No SimulationParameters found");
-        commands.insert_resource(extracted_data);
-        return;
-    };
-
-    if sim_params.simulation_speed == crate::resources::simulation::SimulationSpeed::Paused {
-        extracted_data.enabled = false;
-        info!("Simulation paused");
-        commands.insert_resource(extracted_data);
-        return;
-    }
-
-    let Some(grid_params) = main_world.get_resource::<GridParameters>() else {
-        extracted_data.enabled = false;
-        commands.insert_resource(extracted_data);
-        return;
-    };
-
-    let Some(boundary_mode) = main_world.get_resource::<BoundaryMode>() else {
-        extracted_data.enabled = false;
-        commands.insert_resource(extracted_data);
-        return;
-    };
-
-    let Some(time) = main_world.get_resource::<Time>() else {
-        extracted_data.enabled = false;
-        commands.insert_resource(extracted_data);
-        return;
-    };
-
-    extracted_data.enabled = true;
-
-    // Parcourir toutes les entités pour extraire les données
-    let mut particle_data = Vec::new();
-    let mut simulation_data = Vec::new();
-    let mut food_data = Vec::new();
-
-    for entity_ref in main_world.iter_entities() {
-        let entity = entity_ref.id();
-
-        // Vérifier si c'est une particule
-        if let Some(transform) = entity_ref.get::<Transform>() {
-            if let Some(velocity) = entity_ref.get::<Velocity>() {
-                if let Some(particle_type) = entity_ref.get::<ParticleType>() {
-                    if let Some(parent) = entity_ref.get::<ChildOf>() {
-                        // C'est une particule, essayer de trouver sa simulation parente
-                        let parent_entity = parent.parent();
-                        if let Ok(parent_ref) = main_world.get_entity(parent_entity) {
-                            if let Some(sim_parent) = parent_ref.get::<ChildOf>() {
-                                let sim_entity = sim_parent.parent();
-                                if let Ok(sim_ref) = main_world.get_entity(sim_entity) {
-                                    if let Some(sim_id) = sim_ref.get::<SimulationId>() {
-                                        particle_data.push((
-                                            entity,
-                                            transform.translation,
-                                            velocity.0,
-                                            particle_type.0,
-                                            sim_id.0,
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Vérifier si c'est une simulation
-        if let Some(sim_id) = entity_ref.get::<SimulationId>() {
-            if let Some(genotype) = entity_ref.get::<Genotype>() {
-                simulation_data.push((sim_id.0, genotype.genome, genotype.food_force_genome));
-            }
-        }
-
-        // Vérifier si c'est de la nourriture
-        if entity_ref.get::<Food>().is_some() {
-            if let Some(transform) = entity_ref.get::<Transform>() {
-                if let Some(visibility) = entity_ref.get::<ViewVisibility>() {
-                    food_data.push((transform.translation, visibility.get()));
-                }
-            }
-        }
-    }
-
-    info!("Found {} particles, {} simulations, {} food",
-          particle_data.len(), simulation_data.len(), food_data.len());
-
-    // Trier et organiser les données
-    extracted_data.particles = particle_data;
-
-    // Créer le tableau des génomes
-    let mut genomes = vec![(0u64, 0u16); sim_params.simulation_count];
-    for (sim_id, genome, food_genome) in simulation_data {
-        if sim_id < genomes.len() {
-            genomes[sim_id] = (genome, food_genome);
-        }
-    }
-    extracted_data.genomes = genomes;
-
-    // Ajouter la nourriture
-    extracted_data.food_positions = food_data;
-
-    // Paramètres
+    // Toujours mettre à jour les paramètres
     extracted_data.params = GpuSimulationParams {
-        delta_time: time.delta_secs() * sim_params.simulation_speed.multiplier(),
-        particle_count: extracted_data.particles.len() as u32,
+        delta_time: if compute_enabled.0 && sim_params.simulation_speed != crate::resources::simulation::SimulationSpeed::Paused {
+            time.delta_secs() * sim_params.simulation_speed.multiplier()
+        } else {
+            0.0
+        },
+        particle_count: 0, // Sera mis à jour après
         simulation_count: sim_params.simulation_count as u32,
         type_count: sim_params.particle_types as u32,
         max_force_range: sim_params.max_force_range,
         grid_width: grid_params.width,
         grid_height: grid_params.height,
         grid_depth: grid_params.depth,
-        boundary_mode: match *boundary_mode {
+        boundary_mode: match **boundary_mode {
             BoundaryMode::Bounce => 0,
             BoundaryMode::Teleport => 1,
         },
         _padding: [0.0; 3],
     };
 
-    info!("Extracted particle data: enabled={}, particles={}",
-          extracted_data.enabled, extracted_data.particles.len());
+    extracted_data.enabled = compute_enabled.0;
 
-    commands.insert_resource(extracted_data);
+    // Si le compute est désactivé, on continue quand même pour initialiser les buffers
+    // mais on ne fait pas les calculs coûteux
+    if !compute_enabled.0 {
+        return;
+    }
+
+    // Créer un cache des simulations
+    let mut sim_cache = std::collections::HashMap::new();
+    for (sim_id, genotype) in simulations_query.iter() {
+        sim_cache.insert(sim_id.0, (*genotype, sim_id.0));
+    }
+
+    // Extraire les particules
+    for (entity, transform, velocity, particle_type, parent) in particles_query.iter() {
+        // Trouver la simulation parente
+        if let Ok((sim_id, _)) = simulations_query.get(parent.parent()) {
+            extracted_data.particles.push((
+                entity,
+                transform.translation,
+                velocity.0,
+                particle_type.0,
+                sim_id.0,
+            ));
+        }
+    }
+
+    // Mettre à jour le nombre de particules
+    extracted_data.params.particle_count = extracted_data.particles.len() as u32;
+
+    // Extraire les génomes (toujours créer un tableau de la bonne taille)
+    let mut genomes = vec![(0u64, 0u16); sim_params.simulation_count];
+    for (sim_id, genotype) in simulations_query.iter() {
+        if sim_id.0 < genomes.len() {
+            genomes[sim_id.0] = (genotype.genome, genotype.food_force_genome);
+        }
+    }
+    extracted_data.genomes = genomes;
+
+    // Extraire la nourriture visible
+    for (transform, visibility) in food_query.iter() {
+        extracted_data.food_positions.push((
+            transform.translation,
+            visibility.get(),
+        ));
+    }
 }
 
 /// Ressource contenant les buffers GPU
@@ -303,41 +255,56 @@ struct ParticleBuffers {
 /// Prépare les buffers GPU
 fn prepare_particle_buffers(
     mut commands: Commands,
-    pipeline: Option<Res<ParticleComputePipeline>>,
+    pipeline: Res<ParticleComputePipeline>,
     render_device: Res<RenderDevice>,
     extracted_data: Res<ExtractedParticleData>,
+    mut buffers_state: ResMut<GpuBuffersState>,
+    existing_buffers: Option<Res<ParticleBuffers>>,
 ) {
-    let Some(pipeline) = pipeline else {
-        warn!("ParticleComputePipeline not ready");
-        return;
-    };
-
-    info!("prepare_particle_buffers: enabled={}, particle_count={}",
-          extracted_data.enabled,
-          extracted_data.particles.len());
-
-    if !extracted_data.enabled || extracted_data.particles.is_empty() {
+    // Si le compute est désactivé ET qu'il n'y a pas de particules, ne pas créer de buffers
+    if !extracted_data.enabled && extracted_data.particles.is_empty() {
         commands.remove_resource::<ParticleBuffers>();
-        warn!("Removing ParticleBuffers: enabled={}, particles={}",
-              extracted_data.enabled,
-              extracted_data.particles.len());
         return;
     }
 
-    info!("Creating ParticleBuffers for {} particles", extracted_data.particles.len());
+    // Toujours créer des buffers minimaux pour éviter les erreurs
+    let particle_count = extracted_data.particles.len().max(1);
+    let simulation_count = extracted_data.params.simulation_count.max(1) as usize;
+    let food_count = extracted_data.food_positions.len().max(1);
+
+    // Vérifier si on doit recréer les buffers
+    let needs_recreation = buffers_state.allocated_particles < particle_count ||
+        buffers_state.allocated_simulations < simulation_count;
+
+    if !needs_recreation && existing_buffers.is_some() {
+        return;
+    }
 
     // Convertir les particules en format GPU
-    let gpu_particles: Vec<GpuParticle> = extracted_data.particles
-        .iter()
-        .map(|(_, pos, vel, p_type, sim_id)| GpuParticle {
+    let mut gpu_particles: Vec<GpuParticle> = Vec::with_capacity(particle_count);
+
+    for (_, pos, vel, p_type, sim_id) in &extracted_data.particles {
+        gpu_particles.push(GpuParticle {
             position: pos.to_array(),
             _padding1: 0.0,
             velocity: vel.to_array(),
             particle_type: *p_type as u32,
             simulation_id: *sim_id as u32,
             _padding2: [0.0; 3],
-        })
-        .collect();
+        });
+    }
+
+    // Ajouter des particules vides si nécessaire
+    while gpu_particles.len() < particle_count {
+        gpu_particles.push(GpuParticle {
+            position: [0.0; 3],
+            _padding1: 0.0,
+            velocity: [0.0; 3],
+            particle_type: 0,
+            simulation_id: 0,
+            _padding2: [0.0; 3],
+        });
+    }
 
     // Créer le buffer des particules (entrée)
     let particle_buffer_in = render_device.create_buffer_with_data(&BufferInitDescriptor {
@@ -349,7 +316,7 @@ fn prepare_particle_buffers(
     // Créer le buffer des particules (sortie)
     let particle_buffer_out = render_device.create_buffer(&BufferDescriptor {
         label: Some("Particle Buffer Out"),
-        size: (std::mem::size_of::<GpuParticle>() * gpu_particles.len()) as u64,
+        size: (std::mem::size_of::<GpuParticle>() * particle_count) as u64,
         usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -362,17 +329,19 @@ fn prepare_particle_buffers(
     });
 
     // Buffer des génomes (4 u32 par simulation)
-    let genome_data: Vec<u32> = extracted_data.genomes
-        .iter()
-        .flat_map(|(genome, food_genome)| {
-            vec![
-                *genome as u32,
-                (*genome >> 32) as u32,
-                *food_genome as u32,
-                0u32, // padding
-            ]
-        })
-        .collect();
+    let mut genome_data: Vec<u32> = Vec::with_capacity(simulation_count * 4);
+
+    for i in 0..simulation_count {
+        if i < extracted_data.genomes.len() {
+            let (genome, food_genome) = extracted_data.genomes[i];
+            genome_data.push(genome as u32);
+            genome_data.push((genome >> 32) as u32);
+            genome_data.push(food_genome as u32);
+            genome_data.push(0u32); // padding
+        } else {
+            genome_data.extend_from_slice(&[0u32; 4]);
+        }
+    }
 
     let genome_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
         label: Some("Genome Buffer"),
@@ -381,35 +350,33 @@ fn prepare_particle_buffers(
     });
 
     // Buffer de la nourriture
-    let gpu_food: Vec<GpuFood> = extracted_data.food_positions
-        .iter()
-        .map(|(pos, active)| GpuFood {
+    let mut gpu_food: Vec<GpuFood> = Vec::with_capacity(food_count);
+
+    for (pos, active) in &extracted_data.food_positions {
+        gpu_food.push(GpuFood {
             position: pos.to_array(),
             is_active: if *active { 1 } else { 0 },
-        })
-        .collect();
+        });
+    }
 
-    let food_buffer = if !gpu_food.is_empty() {
-        render_device.create_buffer_with_data(&BufferInitDescriptor {
-            label: Some("Food Buffer"),
-            contents: bytemuck::cast_slice(&gpu_food),
-            usage: BufferUsages::STORAGE,
-        })
-    } else {
-        // Buffer vide si pas de nourriture
-        render_device.create_buffer(&BufferDescriptor {
-            label: Some("Food Buffer"),
-            size: std::mem::size_of::<GpuFood>() as u64,
-            usage: BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        })
-    };
+    while gpu_food.len() < food_count {
+        gpu_food.push(GpuFood {
+            position: [0.0; 3],
+            is_active: 0,
+        });
+    }
+
+    let food_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
+        label: Some("Food Buffer"),
+        contents: bytemuck::cast_slice(&gpu_food),
+        usage: BufferUsages::STORAGE,
+    });
 
     // Buffer pour le nombre de nourritures
-    let food_count = extracted_data.food_positions.len() as u32;
+    let food_count_val = extracted_data.food_positions.len() as u32;
     let food_count_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
         label: Some("Food Count Buffer"),
-        contents: bytemuck::bytes_of(&food_count),
+        contents: bytemuck::bytes_of(&food_count_val),
         usage: BufferUsages::UNIFORM,
     });
 
@@ -427,6 +394,10 @@ fn prepare_particle_buffers(
         )),
     );
 
+    // Mettre à jour l'état des buffers
+    buffers_state.allocated_particles = particle_count;
+    buffers_state.allocated_simulations = simulation_count;
+
     commands.insert_resource(ParticleBuffers {
         particle_buffer_in,
         particle_buffer_out,
@@ -435,10 +406,8 @@ fn prepare_particle_buffers(
         food_buffer,
         food_count_buffer,
         bind_group,
-        particle_count: gpu_particles.len(),
+        particle_count: extracted_data.particles.len(),
     });
-
-    info!("ParticleBuffers created successfully");
 }
 
 /// Pipeline pour le compute shader
@@ -510,7 +479,6 @@ impl render_graph::Node for ParticleComputeNode {
         world: &World,
     ) -> Result<(), render_graph::NodeRunError> {
         let Some(buffers) = world.get_resource::<ParticleBuffers>() else {
-            warn!("No ParticleBuffers found in ParticleComputeNode");
             return Ok(());
         };
 
@@ -518,17 +486,13 @@ impl render_graph::Node for ParticleComputeNode {
         let pipeline = world.resource::<ParticleComputePipeline>();
 
         let Some(compute_pipeline) = pipeline_cache.get_compute_pipeline(pipeline.pipeline) else {
-            warn!("Compute pipeline not ready");
             return Ok(());
         };
 
         let extracted_data = world.resource::<ExtractedParticleData>();
-        if !extracted_data.enabled || extracted_data.particles.is_empty() {
-            warn!("No particles to compute or compute disabled");
+        if !extracted_data.enabled || buffers.particle_count == 0 {
             return Ok(());
         }
-
-        info!("Running compute shader for {} particles", buffers.particle_count);
 
         let mut pass = render_context
             .command_encoder()
@@ -555,6 +519,10 @@ fn write_compute_results(
     mut synced_results: ResMut<SyncedComputeResults>,
 ) {
     let Some(buffers) = buffers else { return; };
+
+    if buffers.particle_count == 0 {
+        return;
+    }
 
     // Allouer le buffer de résultats si nécessaire
     if results_buffer.data.len() != buffers.particle_count {
@@ -622,27 +590,15 @@ pub fn apply_compute_results(
     results: Res<SyncedComputeResults>,
     compute_enabled: Res<ComputeEnabled>,
 ) {
-    if !compute_enabled.0 {
-        info!("Compute disabled in apply_compute_results");
+    if !compute_enabled.0 || results.data.is_empty() {
         return;
     }
-
-    if results.data.is_empty() {
-        info!("No compute results to apply");
-        return;
-    }
-
-    info!("Applying compute results for {} particles", results.data.len());
 
     // Appliquer les résultats aux entités
-    let mut applied_count = 0;
     for (entity, gpu_particle) in results.data.iter() {
         if let Ok((mut transform, mut velocity)) = particles.get_mut(*entity) {
             transform.translation = Vec3::from_array(gpu_particle.position);
             velocity.0 = Vec3::from_array(gpu_particle.velocity);
-            applied_count += 1;
         }
     }
-
-    info!("Applied results to {} particles", applied_count);
 }

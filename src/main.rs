@@ -39,8 +39,6 @@ fn main() {
             LogDiagnosticsPlugin::default(),
             FrameTimeDiagnosticsPlugin::default(),
         ))
-        // État principal de l'application (APRÈS DefaultPlugins)
-        .init_state::<AppState>()
         // Nos plugins personnalisés
         .add_plugins((
             SetupPlugin,
