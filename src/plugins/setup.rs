@@ -14,6 +14,11 @@ pub struct SetupPlugin;
 
 impl Plugin for SetupPlugin {
     fn build(&self, app: &mut App) {
+        app.init_state::<AppState>();
+        app.init_resource::<GridParameters>();
+        app.init_resource::<ParticleTypesConfig>();
+        app.init_resource::<SimulationParameters>();
+        app.init_resource::<FoodParameters>();
         app
             // Systèmes de setup uniquement quand on entre dans la simulation
             .add_systems(

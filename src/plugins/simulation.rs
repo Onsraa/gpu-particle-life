@@ -107,7 +107,11 @@ fn compute_disabled(compute: Res<ComputeEnabled>) -> bool {
 }
 
 /// Transition automatique de Starting vers Running
-fn transition_to_running(mut next_state: ResMut<NextState<SimulationState>>) {
+fn transition_to_running(
+    mut next_state: ResMut<NextState<SimulationState>>,
+    compute_enabled: Res<ComputeEnabled>,
+) {
+    info!("Transitioning to Running state, GPU compute: {}", compute_enabled.0);
     next_state.set(SimulationState::Running);
 }
 

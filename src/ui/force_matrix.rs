@@ -215,11 +215,7 @@ pub fn speed_control_ui(
             let gpu_text = if compute_enabled.0 { "🚀 GPU Activé" } else { "💻 CPU Only" };
             if ui.selectable_label(compute_enabled.0, gpu_text).clicked() {
                 compute_enabled.0 = !compute_enabled.0;
-                if compute_enabled.0 {
-                    info!("Compute shader GPU activé");
-                } else {
-                    info!("Compute shader GPU désactivé - utilisation du CPU");
-                }
+                info!("GPU Compute toggled to: {}", compute_enabled.0);
             }
 
             ui.separator();

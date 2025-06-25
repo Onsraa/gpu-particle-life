@@ -88,57 +88,72 @@ fn decode_food_force(food_genome: u32, particle_type: u32, type_count: u32) -> f
     return normalized * FORCE_SCALE_FACTOR;
 }
 
+// Structure pour retourner position et vélocité modifiées
+struct BounceResult {
+    position: vec3<f32>,
+    velocity: vec3<f32>,
+}
+
 // Applique les limites avec rebond
-fn apply_bounce_bounds(position: ptr<function, vec3<f32>>, velocity: ptr<function, vec3<f32>>) {
+fn apply_bounce_bounds(position: vec3<f32>, velocity: vec3<f32>) -> BounceResult {
+    var result: BounceResult;
+    result.position = position;
+    result.velocity = velocity;
+
     let half_width = params.grid_width / 2.0;
     let half_height = params.grid_height / 2.0;
     let half_depth = params.grid_depth / 2.0;
 
     // X bounds
-    if (abs((*position).x) > half_width - PARTICLE_RADIUS) {
-        (*position).x = sign((*position).x) * (half_width - PARTICLE_RADIUS);
-        (*velocity).x *= -0.5;
+    if (abs(result.position.x) > half_width - PARTICLE_RADIUS) {
+        result.position.x = sign(result.position.x) * (half_width - PARTICLE_RADIUS);
+        result.velocity.x *= -0.5;
     }
 
     // Y bounds
-    if (abs((*position).y) > half_height - PARTICLE_RADIUS) {
-        (*position).y = sign((*position).y) * (half_height - PARTICLE_RADIUS);
-        (*velocity).y *= -0.5;
+    if (abs(result.position.y) > half_height - PARTICLE_RADIUS) {
+        result.position.y = sign(result.position.y) * (half_height - PARTICLE_RADIUS);
+        result.velocity.y *= -0.5;
     }
 
     // Z bounds
-    if (abs((*position).z) > half_depth - PARTICLE_RADIUS) {
-        (*position).z = sign((*position).z) * (half_depth - PARTICLE_RADIUS);
-        (*velocity).z *= -0.5;
+    if (abs(result.position.z) > half_depth - PARTICLE_RADIUS) {
+        result.position.z = sign(result.position.z) * (half_depth - PARTICLE_RADIUS);
+        result.velocity.z *= -0.5;
     }
+
+    return result;
 }
 
 // Applique les limites avec téléportation
-fn apply_teleport_bounds(position: ptr<function, vec3<f32>>) {
+fn apply_teleport_bounds(position: vec3<f32>) -> vec3<f32> {
+    var result = position;
     let half_width = params.grid_width / 2.0;
     let half_height = params.grid_height / 2.0;
     let half_depth = params.grid_depth / 2.0;
 
     // X teleport
-    if ((*position).x > half_width) {
-        (*position).x = -half_width + ((*position).x - half_width);
-    } else if ((*position).x < -half_width) {
-        (*position).x = half_width + ((*position).x + half_width);
+    if (result.x > half_width) {
+        result.x = -half_width + (result.x - half_width);
+    } else if (result.x < -half_width) {
+        result.x = half_width + (result.x + half_width);
     }
 
     // Y teleport
-    if ((*position).y > half_height) {
-        (*position).y = -half_height + ((*position).y - half_height);
-    } else if ((*position).y < -half_height) {
-        (*position).y = half_height + ((*position).y + half_height);
+    if (result.y > half_height) {
+        result.y = -half_height + (result.y - half_height);
+    } else if (result.y < -half_height) {
+        result.y = half_height + (result.y + half_height);
     }
 
     // Z teleport
-    if ((*position).z > half_depth) {
-        (*position).z = -half_depth + ((*position).z - half_depth);
-    } else if ((*position).z < -half_depth) {
-        (*position).z = half_depth + ((*position).z + half_depth);
+    if (result.z > half_depth) {
+        result.z = -half_depth + (result.z - half_depth);
+    } else if (result.z < -half_depth) {
+        result.z = half_depth + (result.z + half_depth);
     }
+
+    return result;
 }
 
 @compute @workgroup_size(64, 1, 1)
@@ -243,9 +258,11 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Appliquer les limites
     if (params.boundary_mode == 0u) {
-        apply_bounce_bounds(&particle.position, &particle.velocity);
+        let bounce_result = apply_bounce_bounds(particle.position, particle.velocity);
+        particle.position = bounce_result.position;
+        particle.velocity = bounce_result.velocity;
     } else {
-        apply_teleport_bounds(&particle.position);
+        particle.position = apply_teleport_bounds(particle.position);
     }
 
     // Écrire le résultat

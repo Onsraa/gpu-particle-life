@@ -281,4 +281,5 @@ fn apply_configuration(commands: &mut Commands, config: &MenuConfig) {
     commands.insert_resource(config.boundary_mode);
 
     commands.insert_resource(ComputeEnabled(config.use_gpu));
+    info!("GPU Compute enabled: {}", config.use_gpu);
 }

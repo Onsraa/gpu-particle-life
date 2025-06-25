@@ -87,14 +87,14 @@ impl Plugin for ParticleComputePlugin {
         app.add_systems(
             ExtractSchedule,
             extract_particle_data
-                .run_if(in_state(AppState::Simulation))
-                .run_if(in_state(SimulationState::Running)),
+                .run_if(in_state(AppState::Simulation)),
         );
 
         let render_app = app.sub_app_mut(RenderApp);
         render_app
             .init_resource::<ExtractedParticleData>()
             .init_resource::<ComputeResultsBuffer>()
+            .init_resource::<GpuBuffersState>()  // Nouveau: état persistant des buffers
             .add_systems(
                 Render,
                 (
@@ -143,6 +143,13 @@ pub struct SyncedComputeResults {
     pub data: Vec<(Entity, GpuParticle)>,
 }
 
+/// État persistant des buffers GPU pour éviter de les recréer à chaque frame
+#[derive(Resource, Default)]
+struct GpuBuffersState {
+    allocated_particles: usize,
+    allocated_cells: usize,
+}
+
 /// Système pour extraire les données des particules du monde principal
 fn extract_particle_data(
     mut extracted_data: ResMut<ExtractedParticleData>,
@@ -150,46 +157,61 @@ fn extract_particle_data(
 ) {
     let world: &mut MainWorld = main_world.into_inner();
 
+    // Réinitialiser les données extraites
+    extracted_data.particles.clear();
+    extracted_data.genomes.clear();
+    extracted_data.food_positions.clear();
+
     // Vérifier si le compute est activé
     let compute_enabled = world.get_resource::<ComputeEnabled>()
         .map(|c| c.0)
         .unwrap_or(false);
 
-    if !compute_enabled {
-        extracted_data.enabled = false;
-        return;
-    }
+    extracted_data.enabled = compute_enabled;
 
-    // Récupérer les paramètres
+    // Toujours extraire les paramètres même si le compute est désactivé
+    // Cela permet d'initialiser les buffers correctement
     let Some(sim_params) = world.get_resource::<SimulationParameters>() else {
-        extracted_data.enabled = false;
         return;
     };
 
-    if sim_params.simulation_speed == crate::resources::simulation::SimulationSpeed::Paused {
-        extracted_data.enabled = false;
-        return;
-    }
-
     let Some(grid_params) = world.get_resource::<GridParameters>() else {
-        extracted_data.enabled = false;
         return;
     };
 
     let Some(boundary_mode) = world.get_resource::<BoundaryMode>() else {
-        extracted_data.enabled = false;
         return;
     };
 
     let Some(time) = world.get_resource::<Time>() else {
-        extracted_data.enabled = false;
         return;
     };
 
-    extracted_data.enabled = true;
-    extracted_data.particles.clear();
-    extracted_data.genomes.clear();
-    extracted_data.food_positions.clear();
+    // Mettre à jour les paramètres GPU
+    extracted_data.params = GpuSimulationParams {
+        delta_time: if compute_enabled && sim_params.simulation_speed != crate::resources::simulation::SimulationSpeed::Paused {
+            time.delta_secs() * sim_params.simulation_speed.multiplier()
+        } else {
+            0.0
+        },
+        particle_count: 0, // Sera mis à jour après extraction des particules
+        simulation_count: sim_params.simulation_count as u32,
+        type_count: sim_params.particle_types as u32,
+        max_force_range: sim_params.max_force_range,
+        grid_width: grid_params.width,
+        grid_height: grid_params.height,
+        grid_depth: grid_params.depth,
+        boundary_mode: match *boundary_mode {
+            BoundaryMode::Bounce => 0,
+            BoundaryMode::Teleport => 1,
+        },
+        _padding: [0.0; 3],
+    };
+
+    // Si le compute est désactivé et pas en pause, on ne fait rien de plus
+    if !compute_enabled {
+        return;
+    }
 
     // Extraire les particules
     let mut particles_query = world.query::<(Entity, &Transform, &Velocity, &ParticleType, &ChildOf)>();
@@ -206,6 +228,9 @@ fn extract_particle_data(
             ));
         }
     }
+
+    // Mettre à jour le nombre de particules
+    extracted_data.params.particle_count = extracted_data.particles.len() as u32;
 
     // Extraire les génomes
     let mut genomes = vec![(0u64, 0u16); sim_params.simulation_count];
@@ -228,23 +253,6 @@ fn extract_particle_data(
             ));
         }
     }
-
-    // Paramètres
-    extracted_data.params = GpuSimulationParams {
-        delta_time: time.delta_secs() * sim_params.simulation_speed.multiplier(),
-        particle_count: extracted_data.particles.len() as u32,
-        simulation_count: sim_params.simulation_count as u32,
-        type_count: sim_params.particle_types as u32,
-        max_force_range: sim_params.max_force_range,
-        grid_width: grid_params.width,
-        grid_height: grid_params.height,
-        grid_depth: grid_params.depth,
-        boundary_mode: match *boundary_mode {
-            BoundaryMode::Bounce => 0,
-            BoundaryMode::Teleport => 1,
-        },
-        _padding: [0.0; 3],
-    };
 }
 
 /// Ressource contenant les buffers GPU
@@ -266,24 +274,55 @@ fn prepare_particle_buffers(
     pipeline: Res<ParticleComputePipeline>,
     render_device: Res<RenderDevice>,
     extracted_data: Res<ExtractedParticleData>,
+    mut buffers_state: ResMut<GpuBuffersState>,
 ) {
-    if !extracted_data.enabled || extracted_data.particles.is_empty() {
+    // Si le compute est désactivé et qu'il n'y a pas de particules, on ne crée pas de buffers
+    if !extracted_data.enabled && extracted_data.particles.is_empty() {
         commands.remove_resource::<ParticleBuffers>();
         return;
     }
 
+    // Toujours créer des buffers minimaux même s'il n'y a pas encore de particules
+    // Cela évite les erreurs lors du démarrage
+    let particle_count = extracted_data.particles.len().max(1);
+    let simulation_count = extracted_data.params.simulation_count.max(1) as usize;
+    let food_count = extracted_data.food_positions.len().max(1);
+
+    // Vérifier si on doit recréer les buffers
+    let needs_recreation = buffers_state.allocated_particles < particle_count ||
+        buffers_state.allocated_cells == 0;
+
+    if !needs_recreation && commands.get_resource::<ParticleBuffers>().is_some() {
+        // Les buffers existants sont suffisants, on ne fait que mettre à jour les données
+        return;
+    }
+
     // Convertir les particules en format GPU
-    let gpu_particles: Vec<GpuParticle> = extracted_data.particles
-        .iter()
-        .map(|(_, pos, vel, p_type, sim_id)| GpuParticle {
+    let mut gpu_particles: Vec<GpuParticle> = Vec::with_capacity(particle_count);
+
+    // Remplir avec les particules existantes
+    for (_, pos, vel, p_type, sim_id) in &extracted_data.particles {
+        gpu_particles.push(GpuParticle {
             position: pos.to_array(),
             _padding1: 0.0,
             velocity: vel.to_array(),
             particle_type: *p_type as u32,
             simulation_id: *sim_id as u32,
             _padding2: [0.0; 3],
-        })
-        .collect();
+        });
+    }
+
+    // Ajouter des particules vides si nécessaire
+    while gpu_particles.len() < particle_count {
+        gpu_particles.push(GpuParticle {
+            position: [0.0; 3],
+            _padding1: 0.0,
+            velocity: [0.0; 3],
+            particle_type: 0,
+            simulation_id: 0,
+            _padding2: [0.0; 3],
+        });
+    }
 
     // Créer le buffer des particules (entrée)
     let particle_buffer_in = render_device.create_buffer_with_data(&BufferInitDescriptor {
@@ -295,7 +334,7 @@ fn prepare_particle_buffers(
     // Créer le buffer des particules (sortie)
     let particle_buffer_out = render_device.create_buffer(&BufferDescriptor {
         label: Some("Particle Buffer Out"),
-        size: (std::mem::size_of::<GpuParticle>() * gpu_particles.len()) as u64,
+        size: (std::mem::size_of::<GpuParticle>() * particle_count) as u64,
         usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -308,17 +347,20 @@ fn prepare_particle_buffers(
     });
 
     // Buffer des génomes (4 u32 par simulation)
-    let genome_data: Vec<u32> = extracted_data.genomes
-        .iter()
-        .flat_map(|(genome, food_genome)| {
-            vec![
-                *genome as u32,
-                (*genome >> 32) as u32,
-                *food_genome as u32,
-                0u32, // padding
-            ]
-        })
-        .collect();
+    let mut genome_data: Vec<u32> = Vec::with_capacity(simulation_count * 4);
+
+    for i in 0..simulation_count {
+        if i < extracted_data.genomes.len() {
+            let (genome, food_genome) = extracted_data.genomes[i];
+            genome_data.push(genome as u32);
+            genome_data.push((genome >> 32) as u32);
+            genome_data.push(food_genome as u32);
+            genome_data.push(0u32); // padding
+        } else {
+            // Génome par défaut si pas encore créé
+            genome_data.extend_from_slice(&[0u32; 4]);
+        }
+    }
 
     let genome_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
         label: Some("Genome Buffer"),
@@ -327,35 +369,34 @@ fn prepare_particle_buffers(
     });
 
     // Buffer de la nourriture
-    let gpu_food: Vec<GpuFood> = extracted_data.food_positions
-        .iter()
-        .map(|(pos, active)| GpuFood {
+    let mut gpu_food: Vec<GpuFood> = Vec::with_capacity(food_count);
+
+    for (pos, active) in &extracted_data.food_positions {
+        gpu_food.push(GpuFood {
             position: pos.to_array(),
             is_active: if *active { 1 } else { 0 },
-        })
-        .collect();
+        });
+    }
 
-    let food_buffer = if !gpu_food.is_empty() {
-        render_device.create_buffer_with_data(&BufferInitDescriptor {
-            label: Some("Food Buffer"),
-            contents: bytemuck::cast_slice(&gpu_food),
-            usage: BufferUsages::STORAGE,
-        })
-    } else {
-        // Buffer vide si pas de nourriture
-        render_device.create_buffer(&BufferDescriptor {
-            label: Some("Food Buffer"),
-            size: std::mem::size_of::<GpuFood>() as u64,
-            usage: BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        })
-    };
+    // Ajouter de la nourriture vide si nécessaire
+    while gpu_food.len() < food_count {
+        gpu_food.push(GpuFood {
+            position: [0.0; 3],
+            is_active: 0,
+        });
+    }
+
+    let food_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
+        label: Some("Food Buffer"),
+        contents: bytemuck::cast_slice(&gpu_food),
+        usage: BufferUsages::STORAGE,
+    });
 
     // Buffer pour le nombre de nourritures
-    let food_count = extracted_data.food_positions.len() as u32;
+    let food_count_val = extracted_data.food_positions.len() as u32;
     let food_count_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
         label: Some("Food Count Buffer"),
-        contents: bytemuck::bytes_of(&food_count),
+        contents: bytemuck::bytes_of(&food_count_val),
         usage: BufferUsages::UNIFORM,
     });
 
@@ -373,6 +414,10 @@ fn prepare_particle_buffers(
         )),
     );
 
+    // Mettre à jour l'état des buffers
+    buffers_state.allocated_particles = particle_count;
+    buffers_state.allocated_cells = 1; // Marquer comme initialisé
+
     commands.insert_resource(ParticleBuffers {
         particle_buffer_in,
         particle_buffer_out,
@@ -381,7 +426,7 @@ fn prepare_particle_buffers(
         food_buffer,
         food_count_buffer,
         bind_group,
-        particle_count: gpu_particles.len(),
+        particle_count: extracted_data.particles.len(),
     });
 }
 
@@ -465,7 +510,7 @@ impl render_graph::Node for ParticleComputeNode {
         };
 
         let extracted_data = world.resource::<ExtractedParticleData>();
-        if !extracted_data.enabled || extracted_data.particles.is_empty() {
+        if !extracted_data.enabled || buffers.particle_count == 0 {
             return Ok(());
         }
 
@@ -492,6 +537,10 @@ fn write_compute_results(
     mut results_buffer: ResMut<ComputeResultsBuffer>,
 ) {
     let Some(buffers) = buffers else { return; };
+
+    if buffers.particle_count == 0 {
+        return;
+    }
 
     // Allouer le buffer de résultats si nécessaire
     if results_buffer.data.len() != buffers.particle_count {
@@ -552,6 +601,10 @@ fn sync_compute_results(
     extracted_data: Res<ExtractedParticleData>,
 ) {
     let Some(results) = results_buffer else { return; };
+
+    if results.data.is_empty() {
+        return;
+    }
 
     let mut synced_results = SyncedComputeResults::default();
 
