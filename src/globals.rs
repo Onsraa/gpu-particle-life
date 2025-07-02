@@ -24,7 +24,7 @@ pub const COLLISION_DAMPING: f32 = 0.5;
 // Paramètres des forces
 pub const DEFAULT_MAX_FORCE_RANGE: f32 = 100.0;
 pub const FORCE_SCALE_FACTOR: f32 = 1000.0;
-pub const MIN_DISTANCE: f32 = 100.0; // distance minimale pour éviter les singularités
+pub const MIN_DISTANCE: f32 = 0.001;
 pub const PARTICLE_REPULSION_STRENGTH: f32 = 100.0;
 
 // Paramètres génétiques

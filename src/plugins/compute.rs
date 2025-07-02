@@ -172,7 +172,7 @@ fn extract_particle_data(
     // Toujours mettre à jour les paramètres
     extracted_data.params = GpuSimulationParams {
         delta_time: if compute_enabled.0 && sim_params.simulation_speed != crate::resources::simulation::SimulationSpeed::Paused {
-            time.delta_secs() * sim_params.simulation_speed.multiplier()
+            time.delta_secs().min(0.016) // Limiter à 60 FPS pour la stabilité
         } else {
             0.0
         },
@@ -193,7 +193,6 @@ fn extract_particle_data(
     extracted_data.enabled = compute_enabled.0;
 
     // Si le compute est désactivé, on continue quand même pour initialiser les buffers
-    // mais on ne fait pas les calculs coûteux
     if !compute_enabled.0 {
         return;
     }
@@ -239,11 +238,10 @@ fn extract_particle_data(
     }
 }
 
-/// Ressource contenant les buffers GPU
+/// Ressource contenant les buffers GPU - MODIFIÉ pour un seul buffer
 #[derive(Resource)]
 struct ParticleBuffers {
-    particle_buffer_in: Buffer,
-    particle_buffer_out: Buffer,
+    particle_buffer: Buffer,  // UN SEUL buffer au lieu de particle_buffer_in/out
     params_buffer: Buffer,
     genome_buffer: Buffer,
     food_buffer: Buffer,
@@ -306,19 +304,11 @@ fn prepare_particle_buffers(
         });
     }
 
-    // Créer le buffer des particules (entrée)
-    let particle_buffer_in = render_device.create_buffer_with_data(&BufferInitDescriptor {
-        label: Some("Particle Buffer In"),
+    // MODIFIÉ : Créer UN SEUL buffer read-write
+    let particle_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
+        label: Some("Particle Buffer"),
         contents: bytemuck::cast_slice(&gpu_particles),
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-    });
-
-    // Créer le buffer des particules (sortie)
-    let particle_buffer_out = render_device.create_buffer(&BufferDescriptor {
-        label: Some("Particle Buffer Out"),
-        size: (std::mem::size_of::<GpuParticle>() * particle_count) as u64,
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC | BufferUsages::MAP_READ,
-        mapped_at_creation: false,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
     });
 
     // Buffer des paramètres
@@ -380,13 +370,12 @@ fn prepare_particle_buffers(
         usage: BufferUsages::UNIFORM,
     });
 
-    // Créer le bind group
+    // MODIFIÉ : Créer le bind group avec 5 entrées au lieu de 6
     let bind_group = render_device.create_bind_group(
         Some("Particle Compute Bind Group"),
         &pipeline.bind_group_layout,
         &BindGroupEntries::sequential((
-            particle_buffer_in.as_entire_binding(),
-            particle_buffer_out.as_entire_binding(),
+            particle_buffer.as_entire_binding(),
             params_buffer.as_entire_binding(),
             genome_buffer.as_entire_binding(),
             food_buffer.as_entire_binding(),
@@ -399,8 +388,7 @@ fn prepare_particle_buffers(
     buffers_state.allocated_simulations = simulation_count;
 
     commands.insert_resource(ParticleBuffers {
-        particle_buffer_in,
-        particle_buffer_out,
+        particle_buffer,  // UN SEUL buffer
         params_buffer,
         genome_buffer,
         food_buffer,
@@ -421,15 +409,14 @@ impl FromWorld for ParticleComputePipeline {
     fn from_world(world: &mut World) -> Self {
         let render_device = world.resource::<RenderDevice>();
 
+        // MODIFIÉ : Layout avec un seul buffer read-write
         let bind_group_layout = render_device.create_bind_group_layout(
             "Particle Compute Bind Group Layout",
             &BindGroupLayoutEntries::sequential(
                 ShaderStages::COMPUTE,
                 (
-                    // Particles in
-                    storage_buffer_read_only::<GpuParticle>(false),
-                    // Particles out
-                    storage_buffer::<GpuParticle>(false),
+                    // UN SEUL buffer read-write
+                    storage_buffer::<GpuParticle>(false),  // false = read-write
                     // Parameters
                     uniform_buffer::<GpuSimulationParams>(false),
                     // Genomes
@@ -505,6 +492,9 @@ impl render_graph::Node for ParticleComputeNode {
         let num_workgroups = (buffers.particle_count as u32 + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
         pass.dispatch_workgroups(num_workgroups, 1, 1);
 
+        // MODIFIÉ : Plus besoin de copie de buffer !
+        // Les modifications sont faites directement dans particle_buffer
+
         Ok(())
     }
 }
@@ -549,8 +539,9 @@ fn write_compute_results(
         label: Some("Copy Encoder"),
     });
 
+    // MODIFIÉ : Lire depuis particle_buffer (le seul buffer)
     encoder.copy_buffer_to_buffer(
-        &buffers.particle_buffer_out,
+        &buffers.particle_buffer,  // Au lieu de particle_buffer_out
         0,
         &staging_buffer,
         0,

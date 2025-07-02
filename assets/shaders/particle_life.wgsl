@@ -35,13 +35,12 @@ struct Food {
     is_active: u32, // 1 si active, 0 si mangée
 }
 
-// Buffers
-@group(0) @binding(0) var<storage, read> particles_in: array<Particle>;
-@group(0) @binding(1) var<storage, read_write> particles_out: array<Particle>;
-@group(0) @binding(2) var<uniform> params: SimulationParams;
-@group(0) @binding(3) var<storage, read> genomes: array<u32>; // [genome_low, genome_high, food_genome_low, padding] par simulation
-@group(0) @binding(4) var<storage, read> food_positions: array<Food>;
-@group(0) @binding(5) var<uniform> food_count: u32;
+// Buffers - MODIFIÉ : UN SEUL BUFFER DE PARTICULES
+@group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
+@group(0) @binding(1) var<uniform> params: SimulationParams;
+@group(0) @binding(2) var<storage, read> genomes: array<u32>; // [genome_low, genome_high, food_genome_low, padding] par simulation
+@group(0) @binding(3) var<storage, read> food_positions: array<Food>;
+@group(0) @binding(4) var<uniform> food_count: u32;
 
 // Décode une force depuis le génome
 fn decode_force(genome_low: u32, genome_high: u32, type_a: u32, type_b: u32, type_count: u32) -> f32 {
@@ -163,7 +162,8 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    var particle = particles_in[index];
+    // MODIFIÉ : Lire depuis LE buffer unique
+    var particle = particles[index];
     var total_force = vec3<f32>(0.0, 0.0, 0.0);
 
     // Récupérer le génome de cette simulation
@@ -178,7 +178,8 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
             continue;
         }
 
-        let other = particles_in[i];
+        // MODIFIÉ : Lire depuis LE buffer unique
+        let other = particles[i];
 
         // Ignorer les particules d'autres simulations
         if (other.simulation_id != particle.simulation_id) {
@@ -186,13 +187,16 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
 
         let distance_vec = other.position - particle.position;
-        let distance = length(distance_vec);
 
-        // Ignorer si trop loin
-        if (distance > params.max_force_range || distance < MIN_DISTANCE) {
+        // MODIFIÉ : Utiliser distance² comme le projet 2D
+        let distance_squared = dot(distance_vec, distance_vec);
+
+        // MODIFIÉ : Test simplifié comme le projet 2D
+        if (distance_squared == 0.0 || distance_squared > params.max_force_range * params.max_force_range) {
             continue;
         }
 
+        let distance = sqrt(distance_squared);
         let force_direction = normalize(distance_vec);
 
         // Force de répulsion pour éviter la superposition
@@ -245,7 +249,7 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
     particle.velocity += acceleration * params.delta_time;
 
     // Amortissement
-    particle.velocity *= DAMPING;
+    particle.velocity *= pow(DAMPING, params.delta_time);
 
     // Limiter la vitesse
     let speed = length(particle.velocity);
@@ -265,6 +269,5 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
         particle.position = apply_teleport_bounds(particle.position);
     }
 
-    // Écrire le résultat
-    particles_out[index] = particle;
+    particles[index] = particle;
 }
