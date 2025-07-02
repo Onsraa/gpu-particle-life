@@ -6,7 +6,8 @@ const PARTICLE_REPULSION_STRENGTH: f32 = 100.0;
 const FORCE_SCALE_FACTOR: f32 = 1000.0;
 const MAX_VELOCITY: f32 = 200.0;
 const PARTICLE_MASS: f32 = 1.0;
-const DAMPING: f32 = 0.99;
+const VELOCITY_HALF_LIFE: f32 = 0.043; // Correspondant au projet 2D
+const MAX_INTERACTIONS_PER_PARTICLE: u32 = 100; // Limiter les interactions
 
 // Structure pour une particule
 struct Particle {
@@ -26,21 +27,22 @@ struct SimulationParams {
     grid_width: f32,
     grid_height: f32,
     grid_depth: f32,
-    boundary_mode: u32, // 0 = bounce, 1 = teleport
+    boundary_mode: u32,
 }
 
 // Structure pour la nourriture
 struct Food {
     position: vec3<f32>,
-    is_active: u32, // 1 si active, 0 si mangée
+    is_active: u32,
 }
 
-// Buffers - MODIFIÉ : UN SEUL BUFFER DE PARTICULES
-@group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
-@group(0) @binding(1) var<uniform> params: SimulationParams;
-@group(0) @binding(2) var<storage, read> genomes: array<u32>; // [genome_low, genome_high, food_genome_low, padding] par simulation
-@group(0) @binding(3) var<storage, read> food_positions: array<Food>;
-@group(0) @binding(4) var<uniform> food_count: u32;
+// Buffers séparés pour éviter les race conditions
+@group(0) @binding(0) var<storage, read> particles_in: array<Particle>;
+@group(0) @binding(1) var<storage, read_write> particles_out: array<Particle>;
+@group(0) @binding(2) var<uniform> params: SimulationParams;
+@group(0) @binding(3) var<storage, read> genomes: array<u32>;
+@group(0) @binding(4) var<storage, read> food_positions: array<Food>;
+@group(0) @binding(5) var<uniform> food_count: u32;
 
 // Décode une force depuis le génome
 fn decode_force(genome_low: u32, genome_high: u32, type_a: u32, type_b: u32, type_count: u32) -> f32 {
@@ -55,11 +57,9 @@ fn decode_force(genome_low: u32, genome_high: u32, type_a: u32, type_b: u32, typ
         return 0.0;
     }
 
-    // Extraire les bits
     let mask = (1u << bits_per_interaction) - 1u;
     let raw_value = u32((genome >> bit_start) & u64(mask));
 
-    // Normaliser entre -1 et 1
     let max_value = f32((1u << bits_per_interaction) - 1u);
     let normalized = (f32(raw_value) / max_value) * 2.0 - 1.0;
 
@@ -68,7 +68,6 @@ fn decode_force(genome_low: u32, genome_high: u32, type_a: u32, type_b: u32, typ
 
 // Décode la force de nourriture depuis le génome
 fn decode_food_force(food_genome: u32, particle_type: u32, type_count: u32) -> f32 {
-    // Les 16 bits du food_genome sont répartis entre les types
     let bits_per_type = 16u / max(type_count, 1u);
     let bit_start = particle_type * bits_per_type;
 
@@ -76,15 +75,36 @@ fn decode_food_force(food_genome: u32, particle_type: u32, type_count: u32) -> f
         return 0.0;
     }
 
-    // Extraire les bits
     let mask = (1u << bits_per_type) - 1u;
     let raw_value = (food_genome >> bit_start) & mask;
 
-    // Normaliser entre -1 et 1
     let max_value = f32((1u << bits_per_type) - 1u);
     let normalized = (f32(raw_value) / max_value) * 2.0 - 1.0;
 
     return normalized * FORCE_SCALE_FACTOR;
+}
+
+// Calcule l'accélération entre deux particules (similaire au projet 2D)
+fn acceleration(min_r: f32, relative_pos: vec3<f32>, attraction: f32) -> vec3<f32> {
+    let dist = length(relative_pos);
+    if (dist < MIN_DISTANCE) {
+        return vec3<f32>(0.0);
+    }
+
+    var force: f32;
+    let normalized_pos = relative_pos / params.max_force_range;
+    let normalized_dist = dist / params.max_force_range;
+    let min_r_normalized = min_r / params.max_force_range;
+
+    if (normalized_dist < min_r_normalized) {
+        // Force de répulsion (toujours négative)
+        force = (normalized_dist / min_r_normalized - 1.0);
+    } else {
+        // Force d'attraction/répulsion basée sur le génome
+        force = attraction * (1.0 - abs(1.0 + min_r_normalized - 2.0 * normalized_dist) / (1.0 - min_r_normalized));
+    }
+
+    return normalized_pos * force / normalized_dist;
 }
 
 // Structure pour retourner position et vélocité modifiées
@@ -162,24 +182,26 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    // MODIFIÉ : Lire depuis LE buffer unique
-    var particle = particles[index];
+    // Lire depuis le buffer d'entrée
+    var particle = particles_in[index];
     var total_force = vec3<f32>(0.0, 0.0, 0.0);
 
     // Récupérer le génome de cette simulation
-    let genome_idx = particle.simulation_id * 4u; // 4 u32 par simulation
+    let genome_idx = particle.simulation_id * 4u;
     let genome_low = genomes[genome_idx];
     let genome_high = genomes[genome_idx + 1u];
     let food_genome = genomes[genome_idx + 2u];
 
     // === Forces avec les autres particules ===
-    for (var i = 0u; i < params.particle_count; i++) {
+    var interactions_count = 0u;
+
+    for (var i = 0u; i < params.particle_count && interactions_count < MAX_INTERACTIONS_PER_PARTICLE; i++) {
         if (i == index) {
             continue;
         }
 
-        // MODIFIÉ : Lire depuis LE buffer unique
-        let other = particles[i];
+        // Lire depuis le buffer d'entrée
+        let other = particles_in[i];
 
         // Ignorer les particules d'autres simulations
         if (other.simulation_id != particle.simulation_id) {
@@ -187,33 +209,20 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
 
         let distance_vec = other.position - particle.position;
-
-        // MODIFIÉ : Utiliser distance² comme le projet 2D
         let distance_squared = dot(distance_vec, distance_vec);
 
-        // MODIFIÉ : Test simplifié comme le projet 2D
+        // Vérifier si dans la portée
         if (distance_squared == 0.0 || distance_squared > params.max_force_range * params.max_force_range) {
             continue;
         }
 
-        let distance = sqrt(distance_squared);
-        let force_direction = normalize(distance_vec);
+        interactions_count++;
 
-        // Force de répulsion pour éviter la superposition
-        let overlap_distance = PARTICLE_RADIUS * 2.0;
-        if (distance < overlap_distance) {
-            let overlap_amount = (overlap_distance - distance) / overlap_distance;
-            let repulsion_force = -force_direction * PARTICLE_REPULSION_STRENGTH * overlap_amount * overlap_amount;
-            total_force += repulsion_force;
-        }
+        // Calculer la force en utilisant la même approche que le projet 2D
+        let attraction = decode_force(genome_low, genome_high, particle.particle_type, other.particle_type, params.type_count);
+        let accel = acceleration(f32(params.type_count) * PARTICLE_RADIUS, distance_vec, attraction);
 
-        // Force génétique
-        if (distance > PARTICLE_RADIUS) {
-            let genetic_force = decode_force(genome_low, genome_high, particle.particle_type, other.particle_type, params.type_count);
-            let distance_factor = min(PARTICLE_RADIUS / distance, 1.0);
-            let force_magnitude = genetic_force * distance_factor;
-            total_force += force_direction * force_magnitude;
-        }
+        total_force += accel * params.max_force_range;
     }
 
     // === Forces avec la nourriture ===
@@ -223,7 +232,6 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
         for (var i = 0u; i < food_count; i++) {
             let food = food_positions[i];
 
-            // Ignorer la nourriture inactive
             if (food.is_active == 0u) {
                 continue;
             }
@@ -231,25 +239,20 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let distance_vec = food.position - particle.position;
             let distance = length(distance_vec);
 
-            // Appliquer la force si dans la portée
             if (distance > MIN_DISTANCE && distance < params.max_force_range) {
                 let force_direction = normalize(distance_vec);
-
-                // Atténuation plus douce pour la nourriture
                 let distance_factor = pow(min((FOOD_RADIUS * 2.0) / distance, 1.0), 0.5);
                 let force_magnitude = particle_food_force * distance_factor;
-
                 total_force += force_direction * force_magnitude;
             }
         }
     }
 
-    // Appliquer les forces (F = ma => a = F/m)
-    let acceleration = total_force / PARTICLE_MASS;
-    particle.velocity += acceleration * params.delta_time;
+    // Appliquer les forces (avec un facteur de force similaire au projet 2D)
+    particle.velocity += total_force * params.delta_time;
 
-    // Amortissement
-    particle.velocity *= pow(DAMPING, params.delta_time);
+    // Amortissement indépendant du framerate (comme dans le projet 2D)
+    particle.velocity *= pow(0.5, params.delta_time / VELOCITY_HALF_LIFE);
 
     // Limiter la vitesse
     let speed = length(particle.velocity);
@@ -269,5 +272,6 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
         particle.position = apply_teleport_bounds(particle.position);
     }
 
-    particles[index] = particle;
+    // Écrire dans le buffer de sortie
+    particles_out[index] = particle;
 }

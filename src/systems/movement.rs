@@ -9,12 +9,13 @@ use crate::components::{
 use crate::globals::*;
 use crate::resources::boundary::BoundaryMode;
 use crate::resources::{grid::GridParameters, simulation::SimulationParameters};
+use crate::resources::particle_types::ParticleTypesConfig;
 use crate::systems::spatial_grid::SpatialGrid;
 
 /// Calcule les forces entre particules et avec la nourriture
 pub fn calculate_forces(
-    time: Res<Time>,
     sim_params: Res<SimulationParameters>,
+    particle_config: Res<ParticleTypesConfig>,
     spatial_grid: Res<SpatialGrid>,
     simulations: Query<(&SimulationId, &Genotype), With<Simulation>>,
     mut particles: Query<
@@ -28,7 +29,8 @@ pub fn calculate_forces(
         return;
     }
 
-    let delta = time.delta_secs() * sim_params.simulation_speed.multiplier();
+    // IMPORTANT: Utiliser un delta fixe pour la physique, pas le delta frame
+    let delta = 0.016; // 60 FPS fixe pour la stabilité de la physique
 
     // Créer un cache des génotypes par simulation
     let mut genotypes_cache = std::collections::HashMap::new();
@@ -65,41 +67,32 @@ pub fn calculate_forces(
             // Utiliser la grille spatiale pour trouver les voisins
             let neighbors = spatial_grid.get_potential_neighbors(*pos_a, *sim_id_a);
 
+            // Limiter le nombre d'interactions (comme dans le GPU)
+            let max_interactions = 100;
+            let mut interaction_count = 0;
+
             for (entity_b, pos_b, type_b) in neighbors {
-                if entity_a == &entity_b {
+                if entity_a == &entity_b || interaction_count >= max_interactions {
                     continue;
                 }
 
                 let distance_vec = pos_b - *pos_a;
-                let distance = distance_vec.length();
+                let distance_squared = distance_vec.dot(distance_vec);
 
-                // Ignorer si trop loin
-                if distance > sim_params.max_force_range || distance < 0.001 {
+                // Ignorer si trop loin ou trop proche
+                if distance_squared > sim_params.max_force_range * sim_params.max_force_range ||
+                    distance_squared < 0.001 {
                     continue;
                 }
 
-                let force_direction = distance_vec.normalize();
+                interaction_count += 1;
 
-                // Force de répulsion pour éviter la superposition
-                let overlap_distance = PARTICLE_RADIUS * 2.0;
-                if distance < overlap_distance {
-                    let overlap_amount = (overlap_distance - distance) / overlap_distance;
-                    // Force de répulsion exponentielle pour éviter la superposition
-                    let repulsion_force =
-                        -force_direction * PARTICLE_REPULSION_STRENGTH * overlap_amount.powi(2);
-                    total_force += repulsion_force;
-                }
+                // Utiliser la même fonction d'accélération que le shader GPU
+                let min_r = particle_config.type_count as f32 * PARTICLE_RADIUS;
+                let attraction = genotype.decode_force(*type_a, type_b);
+                let acceleration = calculate_acceleration(min_r, distance_vec, attraction, sim_params.max_force_range);
 
-                // Force génétique seulement si pas trop proche
-                if distance > PARTICLE_RADIUS {
-                    let genetic_force = genotype.decode_force(*type_a, type_b);
-
-                    // Force avec atténuation en 1/r² mais avec une limite
-                    let distance_factor = (PARTICLE_RADIUS / distance).min(1.0);
-                    let force_magnitude = genetic_force * distance_factor;
-
-                    total_force += force_direction * force_magnitude;
-                }
+                total_force += acceleration * sim_params.max_force_range;
             }
 
             // === FORCES AVEC LA NOURRITURE ===
@@ -116,7 +109,6 @@ pub fn calculate_forces(
                         let force_direction = distance_vec.normalize();
 
                         // Atténuation en fonction de la distance
-                        // Plus douce que pour les particules pour un effet plus naturel
                         let distance_factor = ((FOOD_RADIUS * 2.0) / distance).min(1.0).powf(0.5);
                         let force_magnitude = food_force * distance_factor;
 
@@ -129,15 +121,14 @@ pub fn calculate_forces(
         forces.insert(*entity_a, total_force);
     }
 
-    // Appliquer les forces avec F = ma => a = F/m
+    // Appliquer les forces
     for (entity, _, mut velocity, _, _) in particles.iter_mut() {
         if let Some(force) = forces.get(&entity) {
-            // Accélération = Force / Masse
-            let acceleration = *force / PARTICLE_MASS;
-            velocity.0 += acceleration * delta;
+            // Appliquer l'accélération
+            velocity.0 += *force * delta;
 
-            // Amortissement léger pour la stabilité
-            velocity.0 *= 0.99;
+            // CORRECTION: Amortissement indépendant du framerate (comme dans le shader)
+            velocity.0 *= (0.5_f32).powf(delta / sim_params.velocity_half_life);
 
             // Limiter la vélocité maximale
             if velocity.0.length() > MAX_VELOCITY {
@@ -147,9 +138,30 @@ pub fn calculate_forces(
     }
 }
 
+/// Calcule l'accélération entre deux particules (identique au shader GPU)
+fn calculate_acceleration(min_r: f32, relative_pos: Vec3, attraction: f32, max_force_range: f32) -> Vec3 {
+    let dist = relative_pos.length();
+    if dist < 0.001 {
+        return Vec3::ZERO;
+    }
+
+    let normalized_pos = relative_pos / max_force_range;
+    let normalized_dist = dist / max_force_range;
+    let min_r_normalized = min_r / max_force_range;
+
+    let force = if normalized_dist < min_r_normalized {
+        // Force de répulsion (toujours négative)
+        (normalized_dist / min_r_normalized - 1.0)
+    } else {
+        // Force d'attraction/répulsion basée sur le génome
+        attraction * (1.0 - (1.0 + min_r_normalized - 2.0 * normalized_dist).abs() / (1.0 - min_r_normalized))
+    };
+
+    normalized_pos * force / normalized_dist
+}
+
 /// Applique les vélocités et gère les collisions avec les murs
 pub fn apply_movement(
-    time: Res<Time>,
     sim_params: Res<SimulationParameters>,
     grid: Res<GridParameters>,
     boundary_mode: Res<BoundaryMode>,
@@ -160,13 +172,24 @@ pub fn apply_movement(
         return;
     }
 
-    let delta = time.delta_secs() * sim_params.simulation_speed.multiplier();
+    // Calculer le nombre d'itérations basé sur la vitesse
+    let iterations = match sim_params.simulation_speed {
+        crate::resources::simulation::SimulationSpeed::Paused => 0,
+        crate::resources::simulation::SimulationSpeed::Normal => 1,
+        crate::resources::simulation::SimulationSpeed::Fast => 2,
+        crate::resources::simulation::SimulationSpeed::VeryFast => 4,
+    };
 
-    for (mut transform, mut velocity) in particles.iter_mut() {
-        // Appliquer la vélocité
-        transform.translation += velocity.0 * delta;
+    let base_delta = 0.016; // 60 FPS fixe
 
-        // Gérer les bords selon le mode
-        grid.apply_bounds(&mut transform.translation, &mut velocity.0, *boundary_mode);
+    // Appliquer le mouvement plusieurs fois pour accélérer la simulation
+    for _ in 0..iterations {
+        for (mut transform, mut velocity) in particles.iter_mut() {
+            // Appliquer la vélocité
+            transform.translation += velocity.0 * base_delta;
+
+            // Gérer les bords selon le mode
+            grid.apply_bounds(&mut transform.translation, &mut velocity.0, *boundary_mode);
+        }
     }
 }

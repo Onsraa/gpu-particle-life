@@ -21,7 +21,7 @@ use crate::{
         food::Food,
     },
     resources::{
-        simulation::SimulationParameters,
+        simulation::{SimulationParameters, SimulationSpeed},
         grid::GridParameters,
         boundary::BoundaryMode,
     },
@@ -87,7 +87,7 @@ impl Plugin for ParticleComputePlugin {
         // Système d'extraction dans le monde principal
         app.add_systems(
             ExtractSchedule,
-            extract_particle_data
+            (extract_particle_data, extract_simulation_params)
                 .run_if(in_state(AppState::Simulation)),
         );
 
@@ -97,6 +97,7 @@ impl Plugin for ParticleComputePlugin {
             .init_resource::<ComputeResultsBuffer>()
             .init_resource::<GpuBuffersState>()
             .init_resource::<SyncedComputeResults>()
+            .insert_resource(SimulationParameters::default())
             .add_systems(
                 Render,
                 (
@@ -151,6 +152,14 @@ struct GpuBuffersState {
     allocated_simulations: usize,
 }
 
+/// Système pour extraire les paramètres de simulation
+fn extract_simulation_params(
+    mut commands: Commands,
+    sim_params: Extract<Res<SimulationParameters>>,
+) {
+    commands.insert_resource(sim_params.clone());
+}
+
 /// Système pour extraire les données des particules du monde principal
 fn extract_particle_data(
     mut extracted_data: ResMut<ExtractedParticleData>,
@@ -169,10 +178,14 @@ fn extract_particle_data(
     extracted_data.genomes.clear();
     extracted_data.food_positions.clear();
 
+    // IMPORTANT: Ne PAS appliquer le multiplicateur de vitesse au delta_time
+    // Le delta_time doit rester constant pour que les forces soient indépendantes de la vitesse de simulation
+    let base_delta = 0.016; // 60 FPS fixe pour la physique
+
     // Toujours mettre à jour les paramètres
     extracted_data.params = GpuSimulationParams {
-        delta_time: if compute_enabled.0 && sim_params.simulation_speed != crate::resources::simulation::SimulationSpeed::Paused {
-            time.delta_secs().min(0.016) // Limiter à 60 FPS pour la stabilité
+        delta_time: if compute_enabled.0 && sim_params.simulation_speed != SimulationSpeed::Paused {
+            base_delta // Utiliser un delta fixe pour la physique
         } else {
             0.0
         },
@@ -238,10 +251,11 @@ fn extract_particle_data(
     }
 }
 
-/// Ressource contenant les buffers GPU - MODIFIÉ pour un seul buffer
+/// Ressource contenant les buffers GPU - Avec deux buffers séparés
 #[derive(Resource)]
 struct ParticleBuffers {
-    particle_buffer: Buffer,  // UN SEUL buffer au lieu de particle_buffer_in/out
+    particle_buffer_in: Buffer,
+    particle_buffer_out: Buffer,
     params_buffer: Buffer,
     genome_buffer: Buffer,
     food_buffer: Buffer,
@@ -304,11 +318,17 @@ fn prepare_particle_buffers(
         });
     }
 
-    // MODIFIÉ : Créer UN SEUL buffer read-write
-    let particle_buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
-        label: Some("Particle Buffer"),
+    // Créer deux buffers séparés pour éviter les race conditions
+    let particle_buffer_in = render_device.create_buffer_with_data(&BufferInitDescriptor {
+        label: Some("Particle Buffer In"),
         contents: bytemuck::cast_slice(&gpu_particles),
-        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+    });
+
+    let particle_buffer_out = render_device.create_buffer_with_data(&BufferInitDescriptor {
+        label: Some("Particle Buffer Out"),
+        contents: bytemuck::cast_slice(&gpu_particles),
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
     });
 
     // Buffer des paramètres
@@ -370,12 +390,13 @@ fn prepare_particle_buffers(
         usage: BufferUsages::UNIFORM,
     });
 
-    // MODIFIÉ : Créer le bind group avec 5 entrées au lieu de 6
+    // Créer le bind group avec 6 entrées
     let bind_group = render_device.create_bind_group(
         Some("Particle Compute Bind Group"),
         &pipeline.bind_group_layout,
         &BindGroupEntries::sequential((
-            particle_buffer.as_entire_binding(),
+            particle_buffer_in.as_entire_binding(),
+            particle_buffer_out.as_entire_binding(),
             params_buffer.as_entire_binding(),
             genome_buffer.as_entire_binding(),
             food_buffer.as_entire_binding(),
@@ -388,7 +409,8 @@ fn prepare_particle_buffers(
     buffers_state.allocated_simulations = simulation_count;
 
     commands.insert_resource(ParticleBuffers {
-        particle_buffer,  // UN SEUL buffer
+        particle_buffer_in,
+        particle_buffer_out,
         params_buffer,
         genome_buffer,
         food_buffer,
@@ -409,14 +431,16 @@ impl FromWorld for ParticleComputePipeline {
     fn from_world(world: &mut World) -> Self {
         let render_device = world.resource::<RenderDevice>();
 
-        // MODIFIÉ : Layout avec un seul buffer read-write
+        // Layout avec des buffers séparés pour éviter les race conditions
         let bind_group_layout = render_device.create_bind_group_layout(
             "Particle Compute Bind Group Layout",
             &BindGroupLayoutEntries::sequential(
                 ShaderStages::COMPUTE,
                 (
-                    // UN SEUL buffer read-write
-                    storage_buffer::<GpuParticle>(false),  // false = read-write
+                    // Particles in (read-only)
+                    storage_buffer_read_only::<GpuParticle>(false),
+                    // Particles out (write-only) 
+                    storage_buffer::<GpuParticle>(false),
                     // Parameters
                     uniform_buffer::<GpuSimulationParams>(false),
                     // Genomes
@@ -477,23 +501,44 @@ impl render_graph::Node for ParticleComputeNode {
         };
 
         let extracted_data = world.resource::<ExtractedParticleData>();
+        let sim_params = world.resource::<SimulationParameters>();
+
         if !extracted_data.enabled || buffers.particle_count == 0 {
             return Ok(());
         }
 
-        let mut pass = render_context
-            .command_encoder()
-            .begin_compute_pass(&ComputePassDescriptor::default());
+        // Calculer le nombre d'itérations basé sur la vitesse de simulation
+        let iterations = match sim_params.simulation_speed {
+            SimulationSpeed::Paused => 0,
+            SimulationSpeed::Normal => 1,
+            SimulationSpeed::Fast => 2,
+            SimulationSpeed::VeryFast => 4,
+        };
 
-        pass.set_bind_group(0, &buffers.bind_group, &[]);
-        pass.set_pipeline(compute_pipeline);
+        // Exécuter le compute shader le nombre de fois nécessaire
+        for _ in 0..iterations {
+            let mut pass = render_context
+                .command_encoder()
+                .begin_compute_pass(&ComputePassDescriptor::default());
 
-        // Calculer le nombre de workgroups nécessaires
-        let num_workgroups = (buffers.particle_count as u32 + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
-        pass.dispatch_workgroups(num_workgroups, 1, 1);
+            pass.set_bind_group(0, &buffers.bind_group, &[]);
+            pass.set_pipeline(compute_pipeline);
 
-        // MODIFIÉ : Plus besoin de copie de buffer !
-        // Les modifications sont faites directement dans particle_buffer
+            // Calculer le nombre de workgroups nécessaires
+            let num_workgroups = (buffers.particle_count as u32 + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
+            pass.dispatch_workgroups(num_workgroups, 1, 1);
+
+            drop(pass);
+
+            // Copier les résultats du buffer out vers le buffer in pour la prochaine itération
+            render_context.command_encoder().copy_buffer_to_buffer(
+                &buffers.particle_buffer_out,
+                0,
+                &buffers.particle_buffer_in,
+                0,
+                (std::mem::size_of::<GpuParticle>() * buffers.particle_count) as u64,
+            );
+        }
 
         Ok(())
     }
@@ -539,9 +584,8 @@ fn write_compute_results(
         label: Some("Copy Encoder"),
     });
 
-    // MODIFIÉ : Lire depuis particle_buffer (le seul buffer)
     encoder.copy_buffer_to_buffer(
-        &buffers.particle_buffer,  // Au lieu de particle_buffer_out
+        &buffers.particle_buffer_out,
         0,
         &staging_buffer,
         0,

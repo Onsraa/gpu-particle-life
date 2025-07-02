@@ -1,13 +1,13 @@
 use bevy::prelude::*;
 use crate::globals::*;
 
-#[derive(Default, PartialEq, Eq)]
+#[derive(Default, PartialEq, Eq, Clone)]
 pub enum SimulationSpeed {
     Paused,
     #[default]
     Normal,
-    Fast,    
-    VeryFast, 
+    Fast,
+    VeryFast,
 }
 
 impl SimulationSpeed {
@@ -21,7 +21,7 @@ impl SimulationSpeed {
     }
 }
 
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub struct SimulationParameters {
     // Paramètres d'époque
     pub current_epoch: usize,
@@ -37,6 +37,7 @@ pub struct SimulationParameters {
 
     // Paramètres des forces
     pub max_force_range: f32,
+    pub velocity_half_life: f32,
 }
 
 impl Default for SimulationParameters {
@@ -53,6 +54,7 @@ impl Default for SimulationParameters {
             simulation_speed: SimulationSpeed::default(),
 
             max_force_range: DEFAULT_MAX_FORCE_RANGE,
+            velocity_half_life: 0.043, // Correspondant au projet 2D
         }
     }
 }

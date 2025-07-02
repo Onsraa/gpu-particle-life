@@ -267,6 +267,7 @@ fn apply_configuration(commands: &mut Commands, config: &MenuConfig) {
         particle_types: config.particle_types,
         simulation_speed: crate::resources::simulation::SimulationSpeed::Normal,
         max_force_range: config.max_force_range,
+        velocity_half_life: 0.043,
     });
 
     commands.insert_resource(ParticleTypesConfig::new(config.particle_types));
