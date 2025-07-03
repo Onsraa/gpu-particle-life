@@ -38,6 +38,11 @@ pub struct SimulationParameters {
     // Paramètres des forces
     pub max_force_range: f32,
     pub velocity_half_life: f32,
+
+    // Paramètres génétiques
+    pub elite_ratio: f32,
+    pub mutation_rate: f32,
+    pub crossover_rate: f32,
 }
 
 impl Default for SimulationParameters {
@@ -55,6 +60,10 @@ impl Default for SimulationParameters {
 
             max_force_range: DEFAULT_MAX_FORCE_RANGE,
             velocity_half_life: 0.043, // Correspondant au projet 2D
+
+            elite_ratio: DEFAULT_ELITE_RATIO,
+            mutation_rate: DEFAULT_MUTATION_RATE,
+            crossover_rate: DEFAULT_CROSSOVER_RATE,
         }
     }
 }

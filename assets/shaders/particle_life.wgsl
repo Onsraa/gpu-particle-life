@@ -3,7 +3,7 @@ const PARTICLE_RADIUS: f32 = 2.5;
 const FOOD_RADIUS: f32 = 1.0;
 const MIN_DISTANCE: f32 = 0.001;
 const PARTICLE_REPULSION_STRENGTH: f32 = 100.0;
-const FORCE_SCALE_FACTOR: f32 = 1000.0;
+const FORCE_SCALE_FACTOR: f32 = 80.0; // NOUVEAU FACTEUR
 const MAX_VELOCITY: f32 = 200.0;
 const PARTICLE_MASS: f32 = 1.0;
 const VELOCITY_HALF_LIFE: f32 = 0.043;
@@ -45,16 +45,16 @@ struct Food {
 @group(0) @binding(4) var<storage, read> food_positions: array<Food>;
 @group(0) @binding(5) var<uniform> food_count: u32;
 
-// Décode une force depuis le génome
+// Décode une force depuis le génome (retourne une valeur normalisée entre -1 et 1)
 fn decode_force(genome_low: u32, genome_high: u32, type_a: u32, type_b: u32, type_count: u32) -> f32 {
     let genome = (u64(genome_high) << 32u) | u64(genome_low);
     let interactions = type_count * type_count;
-    let bits_per_interaction = 64u / max(interactions, 1u);
+    let bits_per_interaction = max(64u / max(interactions, 1u), 2u);
 
     let index = type_a * type_count + type_b;
     let bit_start = index * bits_per_interaction;
 
-    if (bit_start >= 64u) {
+    if (bit_start >= 64u || bit_start + bits_per_interaction > 64u) {
         return 0.0;
     }
 
@@ -64,15 +64,20 @@ fn decode_force(genome_low: u32, genome_high: u32, type_a: u32, type_b: u32, typ
     let max_value = f32((1u << bits_per_interaction) - 1u);
     let normalized = (f32(raw_value) / max_value) * 2.0 - 1.0;
 
-    return normalized * FORCE_SCALE_FACTOR;
+    // Transformation non-linéaire pour plus de variété
+    // Utilise x^0.7 signé pour avoir une meilleure distribution
+    let shaped = sign(normalized) * pow(abs(normalized), 0.7);
+
+    // Retourner la valeur mise à l'échelle
+    return shaped * FORCE_SCALE_FACTOR;
 }
 
 // Décode la force de nourriture depuis le génome
 fn decode_food_force(food_genome: u32, particle_type: u32, type_count: u32) -> f32 {
-    let bits_per_type = 16u / max(type_count, 1u);
+    let bits_per_type = max(16u / max(type_count, 1u), 3u);
     let bit_start = particle_type * bits_per_type;
 
-    if (bit_start >= 16u) {
+    if (bit_start >= 16u || bit_start + bits_per_type > 16u) {
         return 0.0;
     }
 
@@ -82,7 +87,10 @@ fn decode_food_force(food_genome: u32, particle_type: u32, type_count: u32) -> f
     let max_value = f32((1u << bits_per_type) - 1u);
     let normalized = (f32(raw_value) / max_value) * 2.0 - 1.0;
 
-    return normalized * FORCE_SCALE_FACTOR;
+    // Même transformation que pour les forces particule-particule
+    let shaped = sign(normalized) * pow(abs(normalized), 0.7);
+
+    return shaped * FORCE_SCALE_FACTOR;
 }
 
 // Calcule l'accélération entre deux particules (similaire au projet 2D)
@@ -219,7 +227,7 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         interactions_count++;
 
-        // Calculer la force en utilisant la même approche que le projet 2D
+        // Calculer la force (maintenant déjà mise à l'échelle)
         let attraction = decode_force(genome_low, genome_high, particle.particle_type, other.particle_type, params.type_count);
 
         // IMPORTANT: Normaliser les positions par max_distance comme dans le projet 2D

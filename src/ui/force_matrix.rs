@@ -72,89 +72,91 @@ pub fn simulations_list_ui(
 
             ui.separator();
 
-            // En-tête du tableau
-            ui.horizontal(|ui| {
-                ui.add_space(5.0);
-                ui.label("Vue");
-                ui.separator();
-                ui.add_space(5.0);
-                ui.label("Simulation");
-                ui.separator();
-                ui.add_space(5.0);
-                ui.label("Score");
-                ui.separator();
-                ui.add_space(5.0);
-                ui.label("Matrice");
-            });
-
-            ui.separator();
-
             // Liste des simulations avec scores
             let mut sim_list: Vec<_> = simulations.iter().collect();
             sim_list.sort_by(|a, b| b.1.get().partial_cmp(&a.1.get()).unwrap()); // Trier par score décroissant
 
             egui::ScrollArea::vertical().show(ui, |ui| {
-                for (sim_id, score, _genotype) in sim_list {
-                    let is_selected_for_matrix = ui_state.selected_simulation == Some(sim_id.0);
-
-                    ui.horizontal(|ui| {
-                        // Style de sélection
-                        if is_selected_for_matrix {
-                            ui.visuals_mut().override_text_color = Some(egui::Color32::from_rgb(100, 200, 255));
-                        }
-
-                        ui.add_space(10.0);
-
-                        let mut is_selected_for_view = ui_state.selected_simulations.contains(&sim_id.0);
-
-                        // Checkbox pour la vue
-                        if ui.checkbox(&mut is_selected_for_view, "").changed() {
-                            if is_selected_for_view {
-                                ui_state.selected_simulations.insert(sim_id.0);
-                            } else {
-                                ui_state.selected_simulations.remove(&sim_id.0);
-                            }
-                        }
+                // Utiliser une Grid pour un meilleur alignement
+                egui::Grid::new("simulations_grid")
+                    .num_columns(4)
+                    .spacing([15.0, 5.0])  // Plus d'espace horizontal
+                    .striped(true)
+                    .min_col_width(40.0)   // Largeur minimale des colonnes
+                    .show(ui, |ui| {
+                        // En-têtes avec style
+                        ui.label(egui::RichText::new("Vue").strong());
+                        ui.label(egui::RichText::new("Simulation").strong());
+                        ui.label(egui::RichText::new("Score").strong());
+                        ui.label(egui::RichText::new("Matrice").strong());
+                        ui.end_row();
 
                         ui.separator();
-                        ui.add_space(15.0);
-
-                        // Numéro de simulation
-                        ui.label(format!("#{}", sim_id.0 + 1));
-
                         ui.separator();
-                        ui.add_space(15.0);
-
-                        // Score avec coloration selon la valeur
-                        let score_value = score.get();
-                        let score_color = if score_value > 10.0 {
-                            egui::Color32::GREEN
-                        } else if score_value > 5.0 {
-                            egui::Color32::YELLOW
-                        } else {
-                            egui::Color32::WHITE
-                        };
-
-                        ui.label(egui::RichText::new(format!("{:.0}", score_value))
-                            .color(score_color));
-
                         ui.separator();
-                        ui.add_space(15.0);
+                        ui.separator();
+                        ui.end_row();
 
-                        // Bouton pour voir la matrice
-                        if ui.small_button("Voir").clicked() {
-                            ui_state.selected_simulation = Some(sim_id.0);
-                            ui_state.show_matrix_window = true;
+                        // Lignes de données
+                        for (sim_id, score, _genotype) in sim_list {
+                            let is_selected_for_matrix = ui_state.selected_simulation == Some(sim_id.0);
+
+                            // Checkbox pour la vue (centré)
+                            ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
+                                let mut is_selected_for_view = ui_state.selected_simulations.contains(&sim_id.0);
+                                if ui.checkbox(&mut is_selected_for_view, "").changed() {
+                                    if is_selected_for_view {
+                                        ui_state.selected_simulations.insert(sim_id.0);
+                                    } else {
+                                        ui_state.selected_simulations.remove(&sim_id.0);
+                                    }
+                                }
+                            });
+
+                            // Numéro de simulation (centré)
+                            ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
+                                let sim_label = if is_selected_for_matrix {
+                                    egui::RichText::new(format!("#{}", sim_id.0 + 1))
+                                        .color(egui::Color32::from_rgb(100, 200, 255))
+                                        .strong()
+                                } else {
+                                    egui::RichText::new(format!("#{}", sim_id.0 + 1))
+                                };
+
+                                if ui.selectable_label(false, sim_label).clicked() {
+                                    ui_state.selected_simulation = Some(sim_id.0);
+                                    ui_state.show_matrix_window = true;
+                                }
+                            });
+
+                            // Score avec coloration (centré)
+                            ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
+                                let score_value = score.get();
+                                let score_color = if score_value > 50.0 {
+                                    egui::Color32::from_rgb(0, 255, 0)
+                                } else if score_value > 20.0 {
+                                    egui::Color32::from_rgb(255, 255, 0)
+                                } else if score_value > 10.0 {
+                                    egui::Color32::from_rgb(255, 150, 0)
+                                } else {
+                                    egui::Color32::from_rgb(200, 200, 200)
+                                };
+                                ui.label(egui::RichText::new(format!("{:.0}", score_value))
+                                    .color(score_color)
+                                    .monospace());
+                            });
+
+                            // Bouton pour voir la matrice (centré)
+                            ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
+                                if ui.button("Voir").clicked() {
+                                    ui_state.selected_simulation = Some(sim_id.0);
+                                    ui_state.show_matrix_window = true;
+                                }
+                            });
+
+                            ui.end_row();
                         }
                     });
-
-                    // Cliquer sur la ligne pour sélectionner
-                    let response = ui.interact(ui.min_rect(), ui.id().with(sim_id.0), egui::Sense::click());
-                    if response.clicked() {
-                        ui_state.selected_simulation = Some(sim_id.0);
-                        ui_state.show_matrix_window = true;
-                    }
-                }
             });
 
             ui.separator();
@@ -260,6 +262,7 @@ pub fn force_matrix_window(
     egui::Window::new(format!("Matrice des Forces - Simulation #{}", selected_sim + 1))
         .resizable(true)
         .collapsible(true)
+        .min_width(500.0)
         .open(&mut ui_state.show_matrix_window)
         .show(ctx, |ui| {
             // Trouver la simulation sélectionnée
@@ -269,92 +272,141 @@ pub fn force_matrix_window(
                 let type_count = particle_config.type_count;
 
                 ui.label(format!("Types de particules: {}", type_count));
+                ui.label(egui::RichText::new("Forces normalisées entre -1.000 et +1.000")
+                    .small()
+                    .color(egui::Color32::from_rgb(150, 150, 150)));
                 ui.separator();
 
                 // === Matrice des forces particule-particule ===
-                ui.label(egui::RichText::new("Forces Particule-Particule").strong());
+                ui.label(egui::RichText::new("Forces Particule-Particule").size(14.0).strong());
+                ui.add_space(5.0);
 
-                // En-têtes de colonnes
-                ui.horizontal(|ui| {
-                    ui.label("De\\Vers");
-                    for j in 0..type_count {
-                        let (color, _) = particle_config.get_color_for_type(j);
-                        ui.label(egui::RichText::new(format!("Type {}", j))
-                            .color(egui::Color32::from_rgb(
-                                (color.to_srgba().red * 255.0) as u8,
-                                (color.to_srgba().green * 255.0) as u8,
-                                (color.to_srgba().blue * 255.0) as u8,
-                            )));
-                    }
-                });
+                // Utiliser une Grid pour la matrice
+                egui::Grid::new("force_matrix_grid")
+                    .num_columns(type_count + 1)
+                    .spacing([10.0, 4.0])
+                    .min_col_width(70.0)
+                    .show(ui, |ui| {
+                        // En-tête vide pour la première colonne
+                        ui.label("De\\Vers");
 
-                // Matrice en lecture seule
-                for i in 0..type_count {
-                    ui.horizontal(|ui| {
-                        let (color, _) = particle_config.get_color_for_type(i);
-                        ui.label(egui::RichText::new(format!("Type {}", i))
-                            .color(egui::Color32::from_rgb(
-                                (color.to_srgba().red * 255.0) as u8,
-                                (color.to_srgba().green * 255.0) as u8,
-                                (color.to_srgba().blue * 255.0) as u8,
-                            )));
-
+                        // En-têtes de colonnes
                         for j in 0..type_count {
-                            let force = genotype.decode_force(i, j);
-
-                            // Couleur selon la valeur de la force
-                            let color = if force > 0.0 {
-                                egui::Color32::from_rgb(0, 200, 0)
-                            } else if force < 0.0 {
-                                egui::Color32::from_rgb(200, 0, 0)
-                            } else {
-                                egui::Color32::GRAY
-                            };
-
-                            ui.label(egui::RichText::new(format!("{:+.1}", force))
-                                .color(color)
-                                .monospace());
+                            let (color, _) = particle_config.get_color_for_type(j);
+                            ui.label(egui::RichText::new(format!("Type {}", j))
+                                .color(egui::Color32::from_rgb(
+                                    (color.to_srgba().red * 255.0) as u8,
+                                    (color.to_srgba().green * 255.0) as u8,
+                                    (color.to_srgba().blue * 255.0) as u8,
+                                ))
+                                .strong());
                         }
-                    });
-                }
+                        ui.end_row();
 
-                ui.separator();
+                        // Ligne de séparation
+                        for _ in 0..=type_count {
+                            ui.separator();
+                        }
+                        ui.end_row();
 
-                // === Forces de nourriture ===
-                ui.label(egui::RichText::new("Forces Nourriture → Particule").strong());
-
-                ui.horizontal(|ui| {
-                    for i in 0..type_count {
-                        let (color, _) = particle_config.get_color_for_type(i);
-                        let food_force = genotype.decode_food_force(i);
-
-                        let force_color = if food_force > 0.0 {
-                            egui::Color32::from_rgb(0, 200, 0)
-                        } else if food_force < 0.0 {
-                            egui::Color32::from_rgb(200, 0, 0)
-                        } else {
-                            egui::Color32::GRAY
-                        };
-
-                        ui.vertical(|ui| {
+                        // Lignes de la matrice
+                        for i in 0..type_count {
+                            // En-tête de ligne
+                            let (color, _) = particle_config.get_color_for_type(i);
                             ui.label(egui::RichText::new(format!("Type {}", i))
                                 .color(egui::Color32::from_rgb(
                                     (color.to_srgba().red * 255.0) as u8,
                                     (color.to_srgba().green * 255.0) as u8,
                                     (color.to_srgba().blue * 255.0) as u8,
-                                )));
-                            ui.label(egui::RichText::new(format!("{:+.1}", food_force))
-                                .color(force_color)
-                                .monospace());
-                        });
-                    }
-                });
+                                ))
+                                .strong());
 
+                            // Valeurs de force avec 3 décimales
+                            for j in 0..type_count {
+                                let force = genotype.decode_force(i, j);
+
+                                // Couleur selon la valeur de la force
+                                let color = if force.abs() < 0.05 {
+                                    egui::Color32::from_rgb(120, 120, 120) // Gris pour valeurs proches de 0
+                                } else if force > 0.0 {
+                                    let intensity = (force.abs() * 255.0) as u8;
+                                    egui::Color32::from_rgb(0, intensity.max(100), 0)
+                                } else {
+                                    let intensity = (force.abs() * 255.0) as u8;
+                                    egui::Color32::from_rgb(intensity.max(100), 0, 0)
+                                };
+
+                                ui.label(egui::RichText::new(format!("{:+.3}", force))
+                                    .color(color)
+                                    .monospace()
+                                    .size(11.0));
+                            }
+                            ui.end_row();
+                        }
+                    });
+
+                ui.add_space(10.0);
                 ui.separator();
 
-                // Informations sur le génome
-                ui.label(format!("Génome principal: 0x{:016X}", genotype.genome));
-                ui.label(format!("Génome nourriture: 0x{:04X}", genotype.food_force_genome));
+                // === Forces de nourriture ===
+                ui.label(egui::RichText::new("Forces Nourriture → Particule").size(14.0).strong());
+                ui.add_space(5.0);
+
+                egui::Grid::new("food_forces_grid")
+                    .num_columns(type_count)
+                    .spacing([20.0, 5.0])
+                    .min_col_width(70.0)
+                    .show(ui, |ui| {
+                        // En-têtes
+                        for i in 0..type_count {
+                            let (color, _) = particle_config.get_color_for_type(i);
+                            ui.label(egui::RichText::new(format!("Type {}", i))
+                                .color(egui::Color32::from_rgb(
+                                    (color.to_srgba().red * 255.0) as u8,
+                                    (color.to_srgba().green * 255.0) as u8,
+                                    (color.to_srgba().blue * 255.0) as u8,
+                                ))
+                                .strong());
+                        }
+                        ui.end_row();
+
+                        // Valeurs avec 3 décimales
+                        for i in 0..type_count {
+                            let food_force = genotype.decode_food_force(i);
+
+                            let color = if food_force.abs() < 0.05 {
+                                egui::Color32::from_rgb(120, 120, 120)
+                            } else if food_force > 0.0 {
+                                let intensity = (food_force.abs() * 255.0) as u8;
+                                egui::Color32::from_rgb(0, intensity.max(100), 0)
+                            } else {
+                                let intensity = (food_force.abs() * 255.0) as u8;
+                                egui::Color32::from_rgb(intensity.max(100), 0, 0)
+                            };
+
+                            ui.label(egui::RichText::new(format!("{:+.3}", food_force))
+                                .color(color)
+                                .monospace()
+                                .size(12.0));
+                        }
+                        ui.end_row();
+                    });
+
+                ui.add_space(10.0);
+                ui.separator();
+
+                // Informations sur le génome et le facteur de force
+                ui.collapsing("Détails techniques", |ui| {
+                    ui.label(format!("Génome principal: 0x{:016X}", genotype.genome));
+                    ui.label(format!("Génome nourriture: 0x{:04X}", genotype.food_force_genome));
+                    ui.label(format!("Bits par interaction: {}", 64 / (type_count * type_count).max(1)));
+                    ui.label(format!("Bits par type (nourriture): {}", 16 / type_count.max(1)));
+                    ui.separator();
+                    ui.label(egui::RichText::new("Facteur de force appliqué: 80.0")
+                        .strong());
+                    ui.label("Les valeurs affichées sont normalisées.");
+                    ui.label("Forces réelles = valeurs × 80.0");
+                });
             }
         });
 }

@@ -1,5 +1,7 @@
 use bevy::prelude::*;
+use rand::prelude::IndexedRandom;
 use rand::Rng;
+use rand::seq::SliceRandom;
 
 use crate::components::{
     particle::{Particle, ParticleType, Velocity},
@@ -16,7 +18,14 @@ use crate::resources::{
 };
 use crate::systems::spawning::FoodPositions;
 
-/// Réinitialise les positions et génomes pour une nouvelle époque
+/// Structure pour stocker un génome avec son score pour le tri
+#[derive(Clone)]
+struct ScoredGenome {
+    genotype: Genotype,
+    score: f32,
+}
+
+/// Réinitialise les positions et applique l'algorithme génétique pour une nouvelle époque
 pub fn reset_for_new_epoch(
     mut commands: Commands,
     grid: Res<GridParameters>,
@@ -34,9 +43,59 @@ pub fn reset_for_new_epoch(
 
     let mut rng = rand::rng();
 
+    // === ALGORITHME GÉNÉTIQUE ===
+    // Collecter tous les génomes avec leurs scores
+    let mut scored_genomes: Vec<ScoredGenome> = simulations
+        .iter()
+        .map(|(_, genotype, score, _)| ScoredGenome {
+            genotype: *genotype,
+            score: score.get(),
+        })
+        .collect();
+
+    // Trier par score décroissant
+    scored_genomes.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+
+    // Calculer le nombre d'élites à garder
+    let elite_count = ((sim_params.simulation_count as f32 * sim_params.elite_ratio).ceil() as usize).max(1);
+
+    info!("=== Algorithme Génétique - Époque {} ===", sim_params.current_epoch);
+    info!("Meilleur score: {:.1}", scored_genomes.first().map(|g| g.score).unwrap_or(0.0));
+    info!("Score moyen: {:.1}", scored_genomes.iter().map(|g| g.score).sum::<f32>() / scored_genomes.len() as f32);
+    info!("Élites conservées: {}", elite_count);
+
+    // Créer la nouvelle population
+    let mut new_genomes = Vec::with_capacity(sim_params.simulation_count);
+
+    // 1. Conserver les élites
+    for i in 0..elite_count {
+        new_genomes.push(scored_genomes[i].genotype);
+    }
+
+    // 2. Générer le reste de la population
+    while new_genomes.len() < sim_params.simulation_count {
+        let mut new_genotype;
+
+        if rng.random::<f32>() < sim_params.crossover_rate && scored_genomes.len() >= 2 {
+            // Crossover - Sélection par tournoi
+            let parent1 = tournament_selection(&scored_genomes, &mut rng);
+            let parent2 = tournament_selection(&scored_genomes, &mut rng);
+            new_genotype = parent1.crossover(&parent2, &mut rng);
+        } else {
+            // Reproduction asexuée - Cloner un parent sélectionné
+            let parent = tournament_selection(&scored_genomes, &mut rng);
+            new_genotype = parent;
+        }
+
+        // Appliquer la mutation
+        new_genotype.mutate(sim_params.mutation_rate, &mut rng);
+
+        new_genomes.push(new_genotype);
+    }
+
+    // === RÉINITIALISATION DES SIMULATIONS ===
     // Générer de nouvelles positions pour les particules
-    // On crée une matrice de positions pour garantir que chaque simulation a les mêmes positions initiales
-    let particles_per_type = sim_params.particle_count / particle_config.type_count;
+    let particles_per_type = (sim_params.particle_count + particle_config.type_count - 1) / particle_config.type_count;
     let mut particle_positions = Vec::new();
 
     for particle_type in 0..particle_config.type_count {
@@ -45,11 +104,13 @@ pub fn reset_for_new_epoch(
         }
     }
 
-    // Réinitialiser chaque simulation
-    for (_, mut genotype, mut score, children) in simulations.iter_mut() {
-        // TODO: Ici on appliquera l'algorithme génétique
-        // Pour l'instant, on génère un nouveau génome aléatoire
-        *genotype = Genotype::random(particle_config.type_count);
+    // Réinitialiser chaque simulation avec son nouveau génome
+    let mut sim_index = 0;
+    for (sim_id, mut genotype, mut score, children) in simulations.iter_mut() {
+        // Appliquer le nouveau génome
+        if sim_index < new_genomes.len() {
+            *genotype = new_genomes[sim_index];
+        }
 
         // Réinitialiser le score
         *score = Score::default();
@@ -62,7 +123,7 @@ pub fn reset_for_new_epoch(
                 if particle_index < particle_positions.len() {
                     let (expected_type, position) = &particle_positions[particle_index];
 
-                    // Vérifier que le type correspond (normalement toujours vrai)
+                    // Vérifier que le type correspond
                     if particle_type.0 == *expected_type {
                         transform.translation = *position;
                         velocity.0 = Vec3::ZERO;
@@ -71,8 +132,11 @@ pub fn reset_for_new_epoch(
                 particle_index += 1;
             }
         }
+
+        sim_index += 1;
     }
 
+    // === RÉINITIALISATION DE LA NOURRITURE ===
     // Générer de nouvelles positions pour la nourriture
     let new_food_positions: Vec<Vec3> = (0..food_params.food_count)
         .map(|_| random_position_in_grid(&grid, &mut rng))
@@ -97,6 +161,19 @@ pub fn reset_for_new_epoch(
     }
 
     info!("Réinitialisation pour l'époque {} terminée", sim_params.current_epoch);
+}
+
+/// Sélection par tournoi pour l'algorithme génétique
+fn tournament_selection(population: &[ScoredGenome], rng: &mut impl Rng) -> Genotype {
+    const TOURNAMENT_SIZE: usize = 3;
+
+    let mut tournament: Vec<&ScoredGenome> = population
+        .choose_multiple(rng, TOURNAMENT_SIZE.min(population.len()))
+        .collect();
+
+    tournament.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+
+    tournament.first().unwrap().genotype
 }
 
 /// Génère une position aléatoire dans la grille

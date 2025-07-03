@@ -63,9 +63,18 @@ pub fn spawn_simulations_with_particles(
         })
         .collect();
 
+    // Calculer le nombre de particules par type (arrondi vers le haut)
+    let particles_per_type = (simulation_params.particle_count + particle_config.type_count - 1) / particle_config.type_count;
+    let actual_particle_count = particles_per_type * particle_config.type_count;
+
+    // Ajuster le nombre total si nécessaire
+    if actual_particle_count != simulation_params.particle_count {
+        info!("Ajustement du nombre de particules de {} à {} pour une répartition équitable",
+              simulation_params.particle_count, actual_particle_count);
+    }
+
     // Générer les positions initiales pour toutes les particules
     // Ces positions seront les mêmes pour toutes les simulations
-    let particles_per_type = simulation_params.particle_count / particle_config.type_count;
     let mut initial_positions = Vec::new();
 
     for particle_type in 0..particle_config.type_count {
@@ -76,6 +85,7 @@ pub fn spawn_simulations_with_particles(
 
     // Pour chaque simulation
     for sim_id in 0..simulation_params.simulation_count {
+        // Créer un génome avec le bon nombre de types
         let genotype = Genotype::random(particle_config.type_count);
 
         // Spawn la simulation avec son RenderLayer
@@ -106,9 +116,10 @@ pub fn spawn_simulations_with_particles(
 
     // Marquer que les entités ont été créées
     entities_spawned.0 = true;
-    info!("Création initiale des {} simulations avec {} particules chacune", 
+    info!("Création initiale des {} simulations avec {} particules chacune ({} par type)", 
           simulation_params.simulation_count, 
-          simulation_params.particle_count);
+          actual_particle_count,
+          particles_per_type);
 }
 
 /// Spawn la nourriture (première fois uniquement)

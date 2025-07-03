@@ -39,6 +39,11 @@ pub struct MenuConfig {
 
     // GPU compute
     pub use_gpu: bool,
+
+    // Paramètres génétiques
+    pub elite_ratio: f32,
+    pub mutation_rate: f32,
+    pub crossover_rate: f32,
 }
 
 impl Default for MenuConfig {
@@ -61,7 +66,11 @@ impl Default for MenuConfig {
             food_value: DEFAULT_FOOD_VALUE,
 
             boundary_mode: BoundaryMode::default(),
-            use_gpu: true, 
+            use_gpu: true,
+
+            elite_ratio: DEFAULT_ELITE_RATIO,
+            mutation_rate: DEFAULT_MUTATION_RATE,
+            crossover_rate: DEFAULT_CROSSOVER_RATE,
         }
     }
 }
@@ -132,8 +141,13 @@ pub fn main_menu_ui(
                 ui.horizontal(|ui| {
                     ui.label("Types de particules:");
                     ui.add(egui::DragValue::new(&mut menu_config.particle_types)
-                        .range(2..=8));
+                        .range(2..=5)); // MODIFIÉ : Limité à 5 au lieu de 8
                 });
+
+                // Ajouter une note explicative
+                ui.label(egui::RichText::new("ℹ Maximum 5 types pour une meilleure variété des forces")
+                    .small()
+                    .color(egui::Color32::from_rgb(150, 150, 150)));
 
                 ui.horizontal(|ui| {
                     ui.label("Durée d'une époque:");
@@ -154,6 +168,44 @@ pub fn main_menu_ui(
                         .range(10.0..=500.0)
                         .suffix(" unités"));
                 });
+            });
+
+            ui.add_space(10.0);
+
+            // === Paramètres génétiques ===
+            ui.group(|ui| {
+                ui.label(egui::RichText::new("Paramètres Génétiques").size(16.0).strong());
+                ui.separator();
+
+                ui.horizontal(|ui| {
+                    ui.label("Ratio d'élites:");
+                    ui.add(egui::DragValue::new(&mut menu_config.elite_ratio)
+                        .range(0.01..=0.5)
+                        .speed(0.01)
+                        .fixed_decimals(2));
+                    ui.label(format!("({:.0}% conservés)", menu_config.elite_ratio * 100.0));
+                });
+                ui.label("Les meilleurs génomes conservés sans modification à chaque époque");
+
+                ui.horizontal(|ui| {
+                    ui.label("Taux de mutation:");
+                    ui.add(egui::DragValue::new(&mut menu_config.mutation_rate)
+                        .range(0.0..=1.0)
+                        .speed(0.01)
+                        .fixed_decimals(2));
+                    ui.label(format!("({:.0}% de chance)", menu_config.mutation_rate * 100.0));
+                });
+                ui.label("Probabilité qu'une interaction soit modifiée");
+
+                ui.horizontal(|ui| {
+                    ui.label("Taux de crossover:");
+                    ui.add(egui::DragValue::new(&mut menu_config.crossover_rate)
+                        .range(0.0..=1.0)
+                        .speed(0.01)
+                        .fixed_decimals(2));
+                    ui.label(format!("({:.0}% de chance)", menu_config.crossover_rate * 100.0));
+                });
+                ui.label("Probabilité de créer un enfant par croisement vs clonage");
             });
 
             ui.add_space(10.0);
@@ -268,6 +320,9 @@ fn apply_configuration(commands: &mut Commands, config: &MenuConfig) {
         simulation_speed: crate::resources::simulation::SimulationSpeed::Normal,
         max_force_range: config.max_force_range,
         velocity_half_life: 0.043,
+        elite_ratio: config.elite_ratio,
+        mutation_rate: config.mutation_rate,
+        crossover_rate: config.crossover_rate,
     });
 
     commands.insert_resource(ParticleTypesConfig::new(config.particle_types));

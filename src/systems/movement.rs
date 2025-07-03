@@ -87,16 +87,17 @@ pub fn calculate_forces(
 
                 interaction_count += 1;
 
-                // Utiliser la même fonction d'accélération que le shader GPU
+                // MODIFICATION ICI : Utiliser get_scaled_force au lieu de decode_force
                 let min_r = particle_config.type_count as f32 * PARTICLE_RADIUS;
-                let attraction = genotype.decode_force(*type_a, type_b);
+                let attraction = genotype.get_scaled_force(*type_a, type_b);
                 let acceleration = calculate_acceleration(min_r, distance_vec, attraction, sim_params.max_force_range);
 
                 total_force += acceleration * sim_params.max_force_range;
             }
 
             // === FORCES AVEC LA NOURRITURE ===
-            let food_force = genotype.decode_food_force(*type_a);
+            // MODIFICATION ICI : Utiliser get_scaled_food_force
+            let food_force = genotype.get_scaled_food_force(*type_a);
 
             // Si la force de nourriture n'est pas nulle, calculer l'interaction
             if food_force.abs() > 0.001 {

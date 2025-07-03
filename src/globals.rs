@@ -23,7 +23,17 @@ pub const COLLISION_DAMPING: f32 = 0.5;
 
 // Paramètres des forces
 pub const DEFAULT_MAX_FORCE_RANGE: f32 = 100.0;
-pub const FORCE_SCALE_FACTOR: f32 = 1000.0;
+
+// NOUVEAU FACTEUR DE FORCE CALCULÉ
+// Basé sur :
+// - Rayon des particules : 2.5 unités
+// - Distance minimale : ~12.5 unités (5 types * 2.5)
+// - Vitesse max : 200 unités/s
+// - Amortissement : vitesse divisée par 2 tous les 0.043s
+// - Pour qu'une force de 1.0 produise une accélération significative
+// - Compensant l'amortissement tout en restant stable
+pub const FORCE_SCALE_FACTOR: f32 = 80.0;
+
 pub const MIN_DISTANCE: f32 = 0.001;
 pub const PARTICLE_REPULSION_STRENGTH: f32 = 100.0;
 
@@ -31,6 +41,9 @@ pub const PARTICLE_REPULSION_STRENGTH: f32 = 100.0;
 pub const MUTATION_RATE: f32 = 0.1;
 pub const ELITE_RATIO: f32 = 0.2; // top 20% des génomes gardés
 pub const CROSSOVER_RATE: f32 = 0.7;
+pub const DEFAULT_ELITE_RATIO: f32 = 0.1; // 10% des génomes gardés
+pub const DEFAULT_MUTATION_RATE: f32 = 0.1; // 10% de chance de mutation
+pub const DEFAULT_CROSSOVER_RATE: f32 = 0.7; // 70% de crossover
 
 // Paramètres de rendu
 pub const PARTICLE_SUBDIVISIONS: u32 = 8;
