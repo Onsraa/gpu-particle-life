@@ -28,6 +28,7 @@ use crate::{
     states::app::AppState,
     states::simulation::SimulationState,
 };
+use crate::globals::PARTICLE_RADIUS;
 
 /// Chemin vers le shader
 const SHADER_ASSET_PATH: &str = "shaders/particle_life.wgsl";
@@ -56,11 +57,12 @@ struct GpuSimulationParams {
     simulation_count: u32,
     type_count: u32,
     max_force_range: f32,
+    min_distance: f32,
     grid_width: f32,
     grid_height: f32,
     grid_depth: f32,
     boundary_mode: u32,
-    _padding: [f32; 3],
+    _padding: [f32; 2],
 }
 
 /// Structure pour la nourriture sur le GPU
@@ -193,6 +195,7 @@ fn extract_particle_data(
         simulation_count: sim_params.simulation_count as u32,
         type_count: sim_params.particle_types as u32,
         max_force_range: sim_params.max_force_range,
+        min_distance: sim_params.particle_types as f32 * PARTICLE_RADIUS,
         grid_width: grid_params.width,
         grid_height: grid_params.height,
         grid_depth: grid_params.depth,
@@ -200,7 +203,7 @@ fn extract_particle_data(
             BoundaryMode::Bounce => 0,
             BoundaryMode::Teleport => 1,
         },
-        _padding: [0.0; 3],
+        _padding: [0.0; 2],
     };
 
     extracted_data.enabled = compute_enabled.0;
@@ -608,6 +611,15 @@ fn write_compute_results(
         let data = buffer_slice.get_mapped_range();
         let gpu_particles: &[GpuParticle] = bytemuck::cast_slice(&data);
         results_buffer.data.copy_from_slice(gpu_particles);
+
+        // LOG DE DEBUG
+        if !results_buffer.data.is_empty() {
+            let first_particle = &results_buffer.data[0];
+            info!("GPU particle 0: pos={:?}, vel={:?}", 
+            first_particle.position, 
+            first_particle.velocity
+        );
+        }
 
         // Mettre à jour directement les résultats synchronisés
         synced_results.data.clear();

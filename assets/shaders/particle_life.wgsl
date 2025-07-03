@@ -6,8 +6,8 @@ const PARTICLE_REPULSION_STRENGTH: f32 = 100.0;
 const FORCE_SCALE_FACTOR: f32 = 1000.0;
 const MAX_VELOCITY: f32 = 200.0;
 const PARTICLE_MASS: f32 = 1.0;
-const VELOCITY_HALF_LIFE: f32 = 0.043; // Correspondant au projet 2D
-const MAX_INTERACTIONS_PER_PARTICLE: u32 = 100; // Limiter les interactions
+const VELOCITY_HALF_LIFE: f32 = 0.043;
+const MAX_INTERACTIONS_PER_PARTICLE: u32 = 100;
 
 // Structure pour une particule
 struct Particle {
@@ -24,6 +24,7 @@ struct SimulationParams {
     simulation_count: u32,
     type_count: u32,
     max_force_range: f32,
+    min_distance: f32,
     grid_width: f32,
     grid_height: f32,
     grid_depth: f32,
@@ -85,26 +86,22 @@ fn decode_food_force(food_genome: u32, particle_type: u32, type_count: u32) -> f
 }
 
 // Calcule l'accélération entre deux particules (similaire au projet 2D)
-fn acceleration(min_r: f32, relative_pos: vec3<f32>, attraction: f32) -> vec3<f32> {
-    let dist = length(relative_pos);
-    if (dist < MIN_DISTANCE) {
+fn acceleration(rmin: f32, dpos: vec3<f32>, a: f32) -> vec3<f32> {
+    let dist = length(dpos);
+    if (dist < 0.001) {
         return vec3<f32>(0.0);
     }
 
     var force: f32;
-    let normalized_pos = relative_pos / params.max_force_range;
-    let normalized_dist = dist / params.max_force_range;
-    let min_r_normalized = min_r / params.max_force_range;
-
-    if (normalized_dist < min_r_normalized) {
+    if (dist < rmin) {
         // Force de répulsion (toujours négative)
-        force = (normalized_dist / min_r_normalized - 1.0);
+        force = (dist / rmin - 1.0);
     } else {
         // Force d'attraction/répulsion basée sur le génome
-        force = attraction * (1.0 - abs(1.0 + min_r_normalized - 2.0 * normalized_dist) / (1.0 - min_r_normalized));
+        force = a * (1.0 - abs(1.0 + rmin - 2.0 * dist) / (1.0 - rmin));
     }
 
-    return normalized_pos * force / normalized_dist;
+    return dpos * force / dist;
 }
 
 // Structure pour retourner position et vélocité modifiées
@@ -192,6 +189,10 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let genome_high = genomes[genome_idx + 1u];
     let food_genome = genomes[genome_idx + 2u];
 
+    // Utiliser les valeurs depuis les paramètres
+    let min_distance = params.min_distance;
+    let max_distance = params.max_force_range;
+
     // === Forces avec les autres particules ===
     var interactions_count = 0u;
 
@@ -212,7 +213,7 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let distance_squared = dot(distance_vec, distance_vec);
 
         // Vérifier si dans la portée
-        if (distance_squared == 0.0 || distance_squared > params.max_force_range * params.max_force_range) {
+        if (distance_squared == 0.0 || distance_squared > max_distance * max_distance) {
             continue;
         }
 
@@ -220,9 +221,15 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         // Calculer la force en utilisant la même approche que le projet 2D
         let attraction = decode_force(genome_low, genome_high, particle.particle_type, other.particle_type, params.type_count);
-        let accel = acceleration(f32(params.type_count) * PARTICLE_RADIUS, distance_vec, attraction);
 
-        total_force += accel * params.max_force_range;
+        // IMPORTANT: Normaliser les positions par max_distance comme dans le projet 2D
+        let dpos_normalized = distance_vec / max_distance;
+        let rmin_normalized = min_distance / max_distance;
+
+        let accel = acceleration(rmin_normalized, dpos_normalized, attraction);
+
+        // Multiplier par max_distance pour revenir aux unités du monde
+        total_force += accel * max_distance;
     }
 
     // === Forces avec la nourriture ===
@@ -239,7 +246,7 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let distance_vec = food.position - particle.position;
             let distance = length(distance_vec);
 
-            if (distance > MIN_DISTANCE && distance < params.max_force_range) {
+            if (distance > MIN_DISTANCE && distance < max_distance) {
                 let force_direction = normalize(distance_vec);
                 let distance_factor = pow(min((FOOD_RADIUS * 2.0) / distance, 1.0), 0.5);
                 let force_magnitude = particle_food_force * distance_factor;
@@ -248,10 +255,10 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
 
-    // Appliquer les forces (avec un facteur de force similaire au projet 2D)
+    // Appliquer les forces
     particle.velocity += total_force * params.delta_time;
 
-    // Amortissement indépendant du framerate (comme dans le projet 2D)
+    // Amortissement indépendant du framerate
     particle.velocity *= pow(0.5, params.delta_time / VELOCITY_HALF_LIFE);
 
     // Limiter la vitesse
