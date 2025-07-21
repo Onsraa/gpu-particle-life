@@ -4,7 +4,7 @@ use crate::globals::*;
 #[derive(Resource)]
 pub struct ParticleTypesConfig {
     pub type_count: usize,
-    pub colors: Vec<(Color, LinearRgba)>, // (base_color, emissive)
+    pub colors: Vec<(Color, LinearRgba)>, 
 }
 
 impl Default for ParticleTypesConfig {

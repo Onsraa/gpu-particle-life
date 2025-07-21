@@ -10,6 +10,7 @@ use crate::systems::{
     spatial_grid::{SpatialGrid, update_spatial_grid},
     spawning::{spawn_food, spawn_simulations_with_particles, EntitiesSpawned},
     reset::reset_for_new_epoch,
+    population_save::{PopulationSaveEvents, AvailablePopulations, process_save_requests, load_available_populations}, // NOUVEAU
 };
 use crate::plugins::compute::{ComputeEnabled, apply_compute_results};
 
@@ -23,6 +24,11 @@ impl Plugin for SimulationPlugin {
             // Ressources
             .init_resource::<SpatialGrid>()
             .init_resource::<EntitiesSpawned>()
+            .init_resource::<PopulationSaveEvents>() // NOUVEAU
+            .init_resource::<AvailablePopulations>() // NOUVEAU
+
+            // NOUVEAU : Charger les populations au démarrage
+            .add_systems(Startup, load_available_populations)
 
             // Transition vers l'état de simulation
             .add_systems(
@@ -36,21 +42,19 @@ impl Plugin for SimulationPlugin {
             .add_systems(
                 OnEnter(SimulationState::Starting),
                 (
-                    // Spawn initial (ne se fait qu'une fois)
                     spawn_simulations_with_particles,
                     spawn_food,
-                    // Reset pour les époques suivantes
                     reset_for_new_epoch,
                 ).chain(),
             )
-            // Transition automatique vers Running
+
             .add_systems(
                 Update,
                 transition_to_running
                     .run_if(in_state(SimulationState::Starting))
                     .run_if(in_state(AppState::Simulation)),
             )
-            // Systèmes de simulation CPU (si compute désactivé)
+
             .add_systems(
                 Update,
                 (
@@ -63,7 +67,7 @@ impl Plugin for SimulationPlugin {
                     .run_if(in_state(AppState::Simulation))
                     .run_if(compute_disabled),
             )
-            // Système de simulation GPU (si compute activé)
+
             .add_systems(
                 Update,
                 apply_compute_results
@@ -71,7 +75,7 @@ impl Plugin for SimulationPlugin {
                     .run_if(in_state(AppState::Simulation))
                     .run_if(compute_enabled),
             )
-            // Systèmes communs
+
             .add_systems(
                 Update,
                 (
@@ -79,19 +83,19 @@ impl Plugin for SimulationPlugin {
                     check_epoch_end,
                     debug_scores,
                     debug_particle_movement,
+                    process_save_requests, // NOUVEAU : Traiter les demandes de sauvegarde
                 )
                     .chain()
                     .run_if(in_state(SimulationState::Running))
                     .run_if(in_state(AppState::Simulation)),
             )
-            // Système de pause
+
             .add_systems(
                 Update,
                 handle_pause_input
                     .run_if(in_state(AppState::Simulation))
             )
-            // Plus besoin de cleanup à chaque époque !
-            // Seulement quand on quitte complètement la simulation
+
             .add_systems(OnExit(AppState::Simulation), cleanup_all);
     }
 }

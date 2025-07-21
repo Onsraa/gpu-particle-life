@@ -6,4 +6,6 @@ pub enum AppState {
     #[default]
     MainMenu,
     Simulation,
+    Visualizer,
+    Visualization,  
 }

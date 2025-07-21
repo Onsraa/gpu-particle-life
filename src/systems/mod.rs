@@ -9,3 +9,6 @@ pub mod visual_highlight;
 pub mod viewport_manager;
 pub mod viewport_debug;
 pub mod reset;
+pub mod viewport_overlay;
+pub mod population_save;
+pub mod spawning_visualizer;

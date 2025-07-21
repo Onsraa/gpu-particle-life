@@ -12,12 +12,12 @@ mod ui;
 
 use crate::plugins::camera::CameraPlugin;
 use crate::plugins::ui::UIPlugin;
+use crate::plugins::visualizer::VisualizerPlugin;
 use crate::states::app::AppState;
-use plugins::{setup::SetupPlugin, simulation::SimulationPlugin, compute::ParticleComputePlugin};
+use plugins::{compute::ParticleComputePlugin, setup::SetupPlugin, simulation::SimulationPlugin};
 
 fn main() {
     App::new()
-        // Plugins Bevy de base (DOIT être ajouté en premier)
         .add_plugins((
             DefaultPlugins.set(WindowPlugin {
                 primary_window: Some(Window {
@@ -46,6 +46,7 @@ fn main() {
             ParticleComputePlugin,
             CameraPlugin,
             UIPlugin,
+            VisualizerPlugin,
         ))
         .add_systems(Update, (make_visible, exit_game))
         .run();
@@ -69,6 +70,12 @@ fn exit_game(
                 app_exit_events.write(AppExit::Success);
             }
             AppState::Simulation => {
+                next_state.set(AppState::MainMenu);
+            }
+            AppState::Visualization => {
+                next_state.set(AppState::MainMenu);
+            }
+            AppState::Visualizer => {
                 next_state.set(AppState::MainMenu);
             }
         }

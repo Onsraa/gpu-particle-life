@@ -11,6 +11,7 @@ use crate::resources::{
 use crate::states::app::AppState;
 use crate::globals::*;
 use crate::plugins::compute::ComputeEnabled;
+use crate::systems::population_save::load_available_populations; 
 
 /// Configuration temporaire pour le menu
 #[derive(Resource)]
@@ -66,7 +67,7 @@ impl Default for MenuConfig {
             food_value: DEFAULT_FOOD_VALUE,
 
             boundary_mode: BoundaryMode::default(),
-            use_gpu: true,
+            use_gpu: false,
 
             elite_ratio: DEFAULT_ELITE_RATIO,
             mutation_rate: DEFAULT_MUTATION_RATE,
@@ -80,93 +81,147 @@ pub fn main_menu_ui(
     mut menu_config: ResMut<MenuConfig>,
     mut next_state: ResMut<NextState<AppState>>,
     mut commands: Commands,
+    mut available_populations: ResMut<crate::systems::population_save::AvailablePopulations>,
 ) {
     let ctx = contexts.ctx_mut();
 
     egui::CentralPanel::default().show(ctx, |ui| {
-        // Titre
+        // Titre avec style amélioré
         ui.vertical_centered(|ui| {
-            ui.heading("Configuration de la Simulation");
+            ui.add_space(20.0);
+            ui.label(egui::RichText::new("🧬 Simulation de Vie Artificielle")
+                .size(28.0)
+                .strong()
+                .color(egui::Color32::from_rgb(100, 200, 255)));
+            ui.label(egui::RichText::new("Évolution génétique de particules autonomes")
+                .size(14.0)
+                .italics()
+                .color(egui::Color32::GRAY));
+            ui.add_space(15.0);
             ui.separator();
+            ui.add_space(10.0);
         });
 
         // Utiliser un ScrollArea pour tout le contenu
         egui::ScrollArea::vertical().show(ui, |ui| {
             // === Paramètres de grille ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("Paramètres de Grille").size(16.0).strong());
+                ui.label(egui::RichText::new("🌍 Paramètres de Grille").size(16.0).strong());
                 ui.separator();
 
-                ui.horizontal(|ui| {
-                    ui.label("Largeur:");
-                    ui.add(egui::DragValue::new(&mut menu_config.grid_width)
-                        .range(100.0..=2000.0)
-                        .suffix(" unités"));
-                });
+                egui::Grid::new("grid_params")
+                    .num_columns(2)
+                    .spacing([10.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Largeur:");
+                        ui.add(egui::DragValue::new(&mut menu_config.grid_width)
+                            .range(100.0..=2000.0)
+                            .suffix(" unités"));
+                        ui.end_row();
 
-                ui.horizontal(|ui| {
-                    ui.label("Hauteur:");
-                    ui.add(egui::DragValue::new(&mut menu_config.grid_height)
-                        .range(100.0..=2000.0)
-                        .suffix(" unités"));
-                });
+                        ui.label("Hauteur:");
+                        ui.add(egui::DragValue::new(&mut menu_config.grid_height)
+                            .range(100.0..=2000.0)
+                            .suffix(" unités"));
+                        ui.end_row();
 
-                ui.horizontal(|ui| {
-                    ui.label("Profondeur:");
-                    ui.add(egui::DragValue::new(&mut menu_config.grid_depth)
-                        .range(100.0..=2000.0)
-                        .suffix(" unités"));
-                });
+                        ui.label("Profondeur:");
+                        ui.add(egui::DragValue::new(&mut menu_config.grid_depth)
+                            .range(100.0..=2000.0)
+                            .suffix(" unités"));
+                        ui.end_row();
+                    });
+
+                ui.add_space(5.0);
+                ui.label(egui::RichText::new(format!("Volume total: {:.0} unités³",
+                                                     menu_config.grid_width * menu_config.grid_height * menu_config.grid_depth))
+                    .small()
+                    .color(egui::Color32::GRAY));
             });
 
             ui.add_space(10.0);
 
             // === Paramètres de simulation ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("Paramètres de Simulation").size(16.0).strong());
+                ui.label(egui::RichText::new("⚙️ Paramètres de Simulation").size(16.0).strong());
                 ui.separator();
 
-                ui.horizontal(|ui| {
-                    ui.label("Nombre de simulations:");
-                    ui.add(egui::DragValue::new(&mut menu_config.simulation_count)
-                        .range(1..=20));
-                });
+                egui::Grid::new("sim_params")
+                    .num_columns(2)
+                    .spacing([10.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Nombre de simulations:");
+                        ui.add(egui::DragValue::new(&mut menu_config.simulation_count)
+                            .range(1..=20));
+                        ui.end_row();
 
-                ui.horizontal(|ui| {
-                    ui.label("Nombre de particules:");
-                    ui.add(egui::DragValue::new(&mut menu_config.particle_count)
-                        .range(10..=2000));
-                });
+                        ui.label("Nombre de particules:");
+                        ui.add(egui::DragValue::new(&mut menu_config.particle_count)
+                            .range(10..=2000));
+                        ui.end_row();
 
-                ui.horizontal(|ui| {
-                    ui.label("Types de particules:");
-                    ui.add(egui::DragValue::new(&mut menu_config.particle_types)
-                        .range(2..=5)); // MODIFIÉ : Limité à 5 au lieu de 8
-                });
+                        ui.label("Types de particules:");
+                        ui.horizontal(|ui| {
+                            ui.add(egui::DragValue::new(&mut menu_config.particle_types)
+                                .range(2..=5));
 
-                // Ajouter une note explicative
-                ui.label(egui::RichText::new("ℹ Maximum 5 types pour une meilleure variété des forces")
-                    .small()
-                    .color(egui::Color32::from_rgb(150, 150, 150)));
+                            // Indicateur de diversité
+                            let interactions = menu_config.particle_types * menu_config.particle_types;
+                            let bits_per_interaction = (64 / interactions.max(1)).max(2).min(8);
+                            let diversity_levels = 1 << bits_per_interaction;
 
-                ui.horizontal(|ui| {
-                    ui.label("Durée d'une époque:");
-                    ui.add(egui::DragValue::new(&mut menu_config.epoch_duration)
-                        .range(10.0..=300.0)
-                        .suffix(" secondes"));
-                });
+                            let diversity_color = match diversity_levels {
+                                256.. => egui::Color32::GREEN,
+                                64..=255 => egui::Color32::YELLOW,
+                                16..=63 => egui::Color32::from_rgb(255, 165, 0), // Orange
+                                _ => egui::Color32::RED,
+                            };
 
-                ui.horizontal(|ui| {
-                    ui.label("Nombre max d'époques:");
-                    ui.add(egui::DragValue::new(&mut menu_config.max_epochs)
-                        .range(1..=1000));
-                });
+                            ui.label(egui::RichText::new(format!("({} niveaux)", diversity_levels))
+                                .small()
+                                .color(diversity_color));
+                        });
+                        ui.end_row();
 
-                ui.horizontal(|ui| {
-                    ui.label("Portée max des forces:");
-                    ui.add(egui::DragValue::new(&mut menu_config.max_force_range)
-                        .range(10.0..=500.0)
-                        .suffix(" unités"));
+                        ui.label("Durée d'une époque:");
+                        ui.add(egui::DragValue::new(&mut menu_config.epoch_duration)
+                            .range(10.0..=300.0)
+                            .suffix(" secondes"));
+                        ui.end_row();
+
+                        ui.label("Nombre max d'époques:");
+                        ui.add(egui::DragValue::new(&mut menu_config.max_epochs)
+                            .range(1..=1000));
+                        ui.end_row();
+
+                        ui.label("Portée max des forces:");
+                        ui.add(egui::DragValue::new(&mut menu_config.max_force_range)
+                            .range(10.0..=500.0)
+                            .suffix(" unités"));
+                        ui.end_row();
+                    });
+
+                ui.add_space(5.0);
+
+                // Informations de diversité détaillées
+                ui.collapsing("ℹ️ Diversité génétique", |ui| {
+                    let interactions = menu_config.particle_types * menu_config.particle_types;
+                    let bits_per_interaction = (64 / interactions.max(1)).max(2).min(8);
+                    let diversity_levels = 1 << bits_per_interaction;
+                    let resolution = 2.0 / (diversity_levels - 1) as f32;
+
+                    ui.label(format!("• {} interactions possibles ({}×{})", interactions, menu_config.particle_types, menu_config.particle_types));
+                    ui.label(format!("• {} bits par interaction", bits_per_interaction));
+                    ui.label(format!("• {} niveaux de force distincts", diversity_levels));
+                    ui.label(format!("• Résolution: {:.4} par step", resolution));
+
+                    match menu_config.particle_types {
+                        2 => ui.label("🟢 Excellent: très fine granularité"),
+                        3 => ui.label("🟢 Recommandé: bon équilibre diversité/granularité"),
+                        4 => ui.label("🟡 Acceptable: granularité moyenne"),
+                        5 => ui.label("🟠 Limité: seulement 4 niveaux par interaction"),
+                        _ => ui.label("🔴 Non recommandé"),
+                    };
                 });
             });
 
@@ -174,90 +229,105 @@ pub fn main_menu_ui(
 
             // === Paramètres génétiques ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("Paramètres Génétiques").size(16.0).strong());
+                ui.label(egui::RichText::new("🧬 Paramètres Génétiques").size(16.0).strong());
                 ui.separator();
 
-                ui.horizontal(|ui| {
-                    ui.label("Ratio d'élites:");
-                    ui.add(egui::DragValue::new(&mut menu_config.elite_ratio)
-                        .range(0.01..=0.5)
-                        .speed(0.01)
-                        .fixed_decimals(2));
-                    ui.label(format!("({:.0}% conservés)", menu_config.elite_ratio * 100.0));
-                });
-                ui.label("Les meilleurs génomes conservés sans modification à chaque époque");
+                egui::Grid::new("genetic_params")
+                    .num_columns(3)
+                    .spacing([10.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Ratio d'élites:");
+                        ui.add(egui::DragValue::new(&mut menu_config.elite_ratio)
+                            .range(0.01..=0.5)
+                            .speed(0.01)
+                            .fixed_decimals(2));
+                        ui.label(format!("({:.0}% conservés)", menu_config.elite_ratio * 100.0));
+                        ui.end_row();
 
-                ui.horizontal(|ui| {
-                    ui.label("Taux de mutation:");
-                    ui.add(egui::DragValue::new(&mut menu_config.mutation_rate)
-                        .range(0.0..=1.0)
-                        .speed(0.01)
-                        .fixed_decimals(2));
-                    ui.label(format!("({:.0}% de chance)", menu_config.mutation_rate * 100.0));
-                });
-                ui.label("Probabilité qu'une interaction soit modifiée");
+                        ui.label("Taux de mutation:");
+                        ui.add(egui::DragValue::new(&mut menu_config.mutation_rate)
+                            .range(0.0..=1.0)
+                            .speed(0.01)
+                            .fixed_decimals(2));
+                        ui.label(format!("({:.0}% de chance)", menu_config.mutation_rate * 100.0));
+                        ui.end_row();
 
-                ui.horizontal(|ui| {
-                    ui.label("Taux de crossover:");
-                    ui.add(egui::DragValue::new(&mut menu_config.crossover_rate)
-                        .range(0.0..=1.0)
-                        .speed(0.01)
-                        .fixed_decimals(2));
-                    ui.label(format!("({:.0}% de chance)", menu_config.crossover_rate * 100.0));
-                });
-                ui.label("Probabilité de créer un enfant par croisement vs clonage");
+                        ui.label("Taux de crossover:");
+                        ui.add(egui::DragValue::new(&mut menu_config.crossover_rate)
+                            .range(0.0..=1.0)
+                            .speed(0.01)
+                            .fixed_decimals(2));
+                        ui.label(format!("({:.0}% de chance)", menu_config.crossover_rate * 100.0));
+                        ui.end_row();
+                    });
+
+                ui.add_space(5.0);
+                ui.label(egui::RichText::new("ℹ️ Algorithme génétique amélioré avec mutation adaptative")
+                    .small()
+                    .color(egui::Color32::GRAY));
             });
 
             ui.add_space(10.0);
 
             // === Paramètres de nourriture ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("Paramètres de Nourriture").size(16.0).strong());
+                ui.label(egui::RichText::new("🍎 Paramètres de Nourriture").size(16.0).strong());
                 ui.separator();
 
-                ui.horizontal(|ui| {
-                    ui.label("Nombre de nourritures:");
-                    ui.add(egui::DragValue::new(&mut menu_config.food_count)
-                        .range(0..=200));
-                });
+                egui::Grid::new("food_params")
+                    .num_columns(2)
+                    .spacing([10.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Nombre de nourritures:");
+                        ui.add(egui::DragValue::new(&mut menu_config.food_count)
+                            .range(0..=200));
+                        ui.end_row();
 
-                ui.checkbox(&mut menu_config.food_respawn_enabled, "Réapparition activée");
+                        ui.label("Réapparition:");
+                        ui.checkbox(&mut menu_config.food_respawn_enabled, "Activée");
+                        ui.end_row();
 
-                if menu_config.food_respawn_enabled {
-                    ui.horizontal(|ui| {
-                        ui.label("Temps de réapparition:");
-                        ui.add(egui::DragValue::new(&mut menu_config.food_respawn_time)
-                            .range(1.0..=60.0)
-                            .suffix(" secondes"));
+                        if menu_config.food_respawn_enabled {
+                            ui.label("Temps de réapparition:");
+                            ui.add(egui::DragValue::new(&mut menu_config.food_respawn_time)
+                                .range(1.0..=60.0)
+                                .suffix(" secondes"));
+                            ui.end_row();
+                        }
+
+                        ui.label("Valeur nutritive:");
+                        ui.add(egui::DragValue::new(&mut menu_config.food_value)
+                            .range(0.1..=10.0)
+                            .fixed_decimals(1));
+                        ui.end_row();
                     });
-                }
 
-                ui.horizontal(|ui| {
-                    ui.label("Valeur nutritive:");
-                    ui.add(egui::DragValue::new(&mut menu_config.food_value)
-                        .range(0.1..=10.0)
-                        .fixed_decimals(1));
-                });
+                ui.add_space(5.0);
+                let density = menu_config.food_count as f32 / (menu_config.grid_width * menu_config.grid_height * menu_config.grid_depth / 1000000.0);
+                ui.label(egui::RichText::new(format!("Densité: {:.2} nourritures/million unités³", density))
+                    .small()
+                    .color(egui::Color32::GRAY));
             });
 
             ui.add_space(10.0);
 
             // === Mode de bords ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("Mode de Bords").size(16.0).strong());
+                ui.label(egui::RichText::new("🔲 Mode de Bords").size(16.0).strong());
                 ui.separator();
 
                 ui.horizontal(|ui| {
-                    ui.radio_value(&mut menu_config.boundary_mode, BoundaryMode::Bounce, "Rebond");
-                    ui.radio_value(&mut menu_config.boundary_mode, BoundaryMode::Teleport, "Téléportation");
+                    ui.radio_value(&mut menu_config.boundary_mode, BoundaryMode::Bounce, "🏀 Rebond");
+                    ui.radio_value(&mut menu_config.boundary_mode, BoundaryMode::Teleport, "🌀 Téléportation");
                 });
 
+                ui.add_space(5.0);
                 match menu_config.boundary_mode {
                     BoundaryMode::Bounce => {
-                        ui.label("Les particules rebondissent sur les murs");
+                        ui.label("Les particules rebondissent sur les murs avec amortissement");
                     },
                     BoundaryMode::Teleport => {
-                        ui.label("Les particules réapparaissent de l'autre côté");
+                        ui.label("Les particules réapparaissent de l'autre côté (tore 3D)");
                     },
                 }
             });
@@ -266,11 +336,20 @@ pub fn main_menu_ui(
 
             // === Paramètres de performance ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("Performance").size(16.0).strong());
+                ui.label(egui::RichText::new("⚡ Performance").size(16.0).strong());
                 ui.separator();
 
-                ui.checkbox(&mut menu_config.use_gpu, "Utiliser le GPU (Compute Shader)");
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut menu_config.use_gpu, "Utiliser le GPU (Compute Shader)");
 
+                    if menu_config.use_gpu {
+                        ui.label("🚀");
+                    } else {
+                        ui.label("💻");
+                    }
+                });
+
+                ui.add_space(5.0);
                 if menu_config.use_gpu {
                     ui.label("🚀 Les calculs d'interactions seront effectués sur le GPU");
                     ui.label("Recommandé pour plus de 500 particules");
@@ -285,17 +364,65 @@ pub fn main_menu_ui(
             // === Boutons d'action ===
             ui.vertical_centered(|ui| {
                 ui.horizontal(|ui| {
-                    if ui.button(egui::RichText::new("Lancer la Simulation").size(18.0)).clicked() {
-                        // Appliquer la configuration aux ressources
+                    // Bouton principal : Lancer Simulation
+                    if ui.add_sized([200.0, 50.0],
+                                    egui::Button::new(egui::RichText::new("🚀 Lancer la Simulation").size(18.0))
+                                        .fill(egui::Color32::from_rgb(0, 120, 215)))
+                        .on_hover_text("Démarre une nouvelle simulation avec algorithme génétique")
+                        .clicked() {
+
                         apply_configuration(&mut commands, &menu_config);
-                        // Changer d'état
                         next_state.set(AppState::Simulation);
                     }
 
-                    if ui.button(egui::RichText::new("Réinitialiser").size(14.0)).clicked() {
-                        *menu_config = MenuConfig::default();
+                    ui.add_space(10.0);
+
+                    // Bouton Visualiseur
+                    if ui.add_sized([180.0, 50.0],
+                                    egui::Button::new(egui::RichText::new("🔍 Visualiseur").size(16.0))
+                                        .fill(egui::Color32::from_rgb(40, 160, 90)))
+                        .on_hover_text("Visualise les populations sauvegardées")
+                        .clicked() {
+
+                        // Recharger les populations disponibles
+                        match crate::systems::population_save::load_all_populations() {
+                            Ok(populations) => {
+                                available_populations.populations = populations;
+                                available_populations.loaded = true;
+                                info!("Populations rechargées: {}", available_populations.populations.len());
+                            }
+                            Err(e) => {
+                                error!("Erreur lors du rechargement des populations: {}", e);
+                            }
+                        }
+
+                        next_state.set(AppState::Visualizer);
                     }
                 });
+
+                ui.add_space(10.0);
+
+                // Bouton secondaire : Réinitialiser
+                if ui.button(egui::RichText::new("⚙️ Réinitialiser").size(14.0))
+                    .on_hover_text("Remet tous les paramètres aux valeurs par défaut")
+                    .clicked() {
+                    *menu_config = MenuConfig::default();
+                }
+            });
+
+            ui.add_space(20.0);
+
+            // === Informations système ===
+            ui.separator();
+            ui.vertical_centered(|ui| {
+                ui.add_space(10.0);
+                ui.label(egui::RichText::new("Simulation 3D avec Bevy 0.16 • Algorithme génétique adaptatif")
+                    .small()
+                    .color(egui::Color32::GRAY));
+                ui.label(egui::RichText::new("Échap: Quitter • Espace: Pause simulation • Sauvegarde: bouton 💾")
+                    .small()
+                    .color(egui::Color32::GRAY));
+                ui.add_space(10.0);
             });
         });
     });
@@ -337,5 +464,12 @@ fn apply_configuration(commands: &mut Commands, config: &MenuConfig) {
     commands.insert_resource(config.boundary_mode);
 
     commands.insert_resource(ComputeEnabled(config.use_gpu));
-    info!("GPU Compute enabled: {}", config.use_gpu);
+
+    info!("Configuration appliquée:");
+    info!("  • Grille: {}×{}×{}", config.grid_width, config.grid_height, config.grid_depth);
+    info!("  • Simulations: {} avec {} particules chacune", config.simulation_count, config.particle_count);
+    info!("  • Types: {} (diversité: {} niveaux)", config.particle_types, 1 << ((64 / (config.particle_types * config.particle_types).max(1)).max(2).min(8)));
+    info!("  • Algorithme génétique: {:.0}% élites, {:.0}% mutation, {:.0}% crossover",
+          config.elite_ratio * 100.0, config.mutation_rate * 100.0, config.crossover_rate * 100.0);
+    info!("  • GPU Compute: {}", if config.use_gpu { "Activé" } else { "CPU seulement" });
 }

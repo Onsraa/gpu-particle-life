@@ -59,7 +59,7 @@ impl Default for SimulationParameters {
             simulation_speed: SimulationSpeed::default(),
 
             max_force_range: DEFAULT_MAX_FORCE_RANGE,
-            velocity_half_life: 0.043, // Correspondant au projet 2D
+            velocity_half_life: 0.043,
 
             elite_ratio: DEFAULT_ELITE_RATIO,
             mutation_rate: DEFAULT_MUTATION_RATE,
