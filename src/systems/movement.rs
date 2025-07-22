@@ -12,27 +12,93 @@ use crate::resources::{grid::GridParameters, simulation::SimulationParameters};
 use crate::resources::particle_types::ParticleTypesConfig;
 use crate::systems::spatial_grid::SpatialGrid;
 
-/// Calcule les forces entre particules et avec la nourriture
-pub fn calculate_forces(
+/// Système principal qui gère les itérations physiques avec timestep fixe
+pub fn physics_simulation_system(
     sim_params: Res<SimulationParameters>,
     particle_config: Res<ParticleTypesConfig>,
-    spatial_grid: Res<SpatialGrid>,
+    mut spatial_grid: ResMut<SpatialGrid>, // Mutable pour mise à jour multiple
+    grid: Res<GridParameters>,
+    boundary_mode: Res<BoundaryMode>,
     simulations: Query<(&SimulationId, &Genotype), With<Simulation>>,
     mut particles: Query<
-        (Entity, &Transform, &mut Velocity, &ParticleType, &ChildOf),
+        (Entity, &mut Transform, &mut Velocity, &ParticleType, &ChildOf),
         With<Particle>,
     >,
-    food_query: Query<(&Transform, &ViewVisibility), With<Food>>,
+    food_query: Query<(&Transform, &ViewVisibility), (With<Food>, Without<Particle>)>,
 ) {
     // Skip si en pause
     if sim_params.simulation_speed == crate::resources::simulation::SimulationSpeed::Paused {
         return;
     }
 
-    // IMPORTANT: Utiliser un delta fixe pour la physique, pas le delta frame
-    let delta = 0.016; // 60 FPS fixe pour la stabilité de la physique
+    // Calculer le nombre d'itérations physiques selon la vitesse de simulation
+    let iterations = match sim_params.simulation_speed {
+        crate::resources::simulation::SimulationSpeed::Paused => 0,
+        crate::resources::simulation::SimulationSpeed::Normal => 1,
+        crate::resources::simulation::SimulationSpeed::Fast => 2,
+        crate::resources::simulation::SimulationSpeed::VeryFast => 4,
+    };
 
-    // Créer un cache des génotypes par simulation
+    // BOUCLE PRINCIPALE : chaque itération fait UN pas physique complet
+    for _iteration in 0..iterations {
+        // 1. Mettre à jour la grille spatiale avec les positions actuelles
+        // CORRECTION : Créer une query compatible pour rebuild()
+        rebuild_spatial_grid(&mut spatial_grid, &particles, &simulations);
+
+        // 2. Calculer les forces pour cette itération
+        let particle_forces = calculate_forces_for_timestep(
+            &sim_params,
+            &particle_config,
+            &spatial_grid,
+            &simulations,
+            &particles,
+            &food_query,
+        );
+
+        // 3. Appliquer les forces et le mouvement pour cette itération
+        apply_physics_step(
+            &grid,
+            &boundary_mode,
+            &mut particles,
+            &particle_forces,
+            &sim_params,
+        );
+    }
+}
+
+/// CORRECTION : Fonction helper pour rebuild avec les bons types
+fn rebuild_spatial_grid(
+    spatial_grid: &mut SpatialGrid,
+    particles: &Query<(Entity, &mut Transform, &mut Velocity, &ParticleType, &ChildOf), With<Particle>>,
+    simulations: &Query<(&SimulationId, &Genotype), With<Simulation>>,
+) {
+    spatial_grid.cells.clear(); // Accès direct au champ cells
+
+    // Reconstruire manuellement avec les données disponibles
+    for (entity, transform, _, particle_type, parent) in particles.iter() {
+        if let Ok((sim_id, _)) = simulations.get(parent.parent()) {
+            let cell_key = SpatialGrid::get_cell_key(transform.translation);
+            let key = (sim_id.0, cell_key);
+
+            spatial_grid.cells
+                .entry(key)
+                .or_default()
+                .push((entity, transform.translation, particle_type.0));
+        }
+    }
+}
+
+/// Calcule les forces pour UN pas de temps physique
+fn calculate_forces_for_timestep(
+    sim_params: &SimulationParameters,
+    particle_config: &ParticleTypesConfig,
+    spatial_grid: &SpatialGrid,
+    simulations: &Query<(&SimulationId, &Genotype), With<Simulation>>,
+    particles: &Query<(Entity, &mut Transform, &mut Velocity, &ParticleType, &ChildOf), With<Particle>>,
+    food_query: &Query<(&Transform, &ViewVisibility), (With<Food>, Without<Particle>)>,
+) -> std::collections::HashMap<Entity, Vec3> {
+
+    // Cache des génotypes par simulation
     let mut genotypes_cache = std::collections::HashMap::new();
     for (sim_id, genotype) in simulations.iter() {
         genotypes_cache.insert(sim_id.0, *genotype);
@@ -45,7 +111,7 @@ pub fn calculate_forces(
         .map(|(transform, _)| transform.translation)
         .collect();
 
-    // Collecter les données nécessaires pour éviter les conflits
+    // Collecter les données des particules pour éviter les conflits
     let particle_data: Vec<_> = particles
         .iter()
         .filter_map(|(entity, transform, _, particle_type, parent)| {
@@ -64,10 +130,7 @@ pub fn calculate_forces(
 
         if let Some(genotype) = genotypes_cache.get(sim_id_a) {
             // === FORCES AVEC LES AUTRES PARTICULES ===
-            // Utiliser la grille spatiale pour trouver les voisins
             let neighbors = spatial_grid.get_potential_neighbors(*pos_a, *sim_id_a);
-
-            // Limiter le nombre d'interactions (comme dans le GPU)
             let max_interactions = 100;
             let mut interaction_count = 0;
 
@@ -79,7 +142,6 @@ pub fn calculate_forces(
                 let distance_vec = pos_b - *pos_a;
                 let distance_squared = distance_vec.dot(distance_vec);
 
-                // Ignorer si trop loin ou trop proche
                 if distance_squared > sim_params.max_force_range * sim_params.max_force_range ||
                     distance_squared < 0.001 {
                     continue;
@@ -87,29 +149,28 @@ pub fn calculate_forces(
 
                 interaction_count += 1;
 
-                // MODIFICATION ICI : Utiliser get_scaled_force au lieu de decode_force
                 let min_r = particle_config.type_count as f32 * PARTICLE_RADIUS;
                 let attraction = genotype.get_scaled_force(*type_a, type_b);
-                let acceleration = calculate_acceleration(min_r, distance_vec, attraction, sim_params.max_force_range);
+                let acceleration = calculate_acceleration(
+                    min_r,
+                    distance_vec,
+                    attraction,
+                    sim_params.max_force_range
+                );
 
                 total_force += acceleration * sim_params.max_force_range;
             }
 
             // === FORCES AVEC LA NOURRITURE ===
-            // MODIFICATION ICI : Utiliser get_scaled_food_force
             let food_force = genotype.get_scaled_food_force(*type_a);
 
-            // Si la force de nourriture n'est pas nulle, calculer l'interaction
             if food_force.abs() > 0.001 {
                 for food_pos in &food_positions {
                     let distance_vec = *food_pos - *pos_a;
                     let distance = distance_vec.length();
 
-                    // Appliquer la force si dans la portée
                     if distance > 0.001 && distance < sim_params.max_force_range {
                         let force_direction = distance_vec.normalize();
-
-                        // Atténuation en fonction de la distance
                         let distance_factor = ((FOOD_RADIUS * 2.0) / distance).min(1.0).powf(0.5);
                         let force_magnitude = food_force * distance_factor;
 
@@ -122,24 +183,44 @@ pub fn calculate_forces(
         forces.insert(*entity_a, total_force);
     }
 
-    // Appliquer les forces
-    for (entity, _, mut velocity, _, _) in particles.iter_mut() {
-        if let Some(force) = forces.get(&entity) {
-            // Appliquer l'accélération
-            velocity.0 += *force * delta;
+    forces
+}
 
-            // CORRECTION: Amortissement indépendant du framerate (comme dans le shader)
-            velocity.0 *= (0.5_f32).powf(delta / sim_params.velocity_half_life);
+/// Applique les forces et le mouvement pour UN pas de temps physique
+fn apply_physics_step(
+    grid: &GridParameters,
+    boundary_mode: &BoundaryMode,
+    particles: &mut Query<
+        (Entity, &mut Transform, &mut Velocity, &ParticleType, &ChildOf),
+        With<Particle>,
+    >,
+    forces: &std::collections::HashMap<Entity, Vec3>,
+    sim_params: &SimulationParameters,
+) {
+    for (entity, mut transform, mut velocity, _, _) in particles.iter_mut() {
+        // Appliquer les forces si disponibles
+        if let Some(force) = forces.get(&entity) {
+            // Accélération = Force / Masse (masse = 1.0)
+            velocity.0 += *force * PHYSICS_TIMESTEP;
+
+            // Amortissement indépendant du framerate
+            velocity.0 *= (0.5_f32).powf(PHYSICS_TIMESTEP / sim_params.velocity_half_life);
 
             // Limiter la vélocité maximale
             if velocity.0.length() > MAX_VELOCITY {
                 velocity.0 = velocity.0.normalize() * MAX_VELOCITY;
             }
         }
+
+        // Appliquer la vélocité pour déplacer la particule
+        transform.translation += velocity.0 * PHYSICS_TIMESTEP;
+
+        // Gérer les collisions avec les bords
+        grid.apply_bounds(&mut transform.translation, &mut velocity.0, *boundary_mode);
     }
 }
 
-/// Calcule l'accélération entre deux particules (identique au shader GPU)
+/// Fonction d'accélération (identique au shader GPU)
 fn calculate_acceleration(min_r: f32, relative_pos: Vec3, attraction: f32, max_force_range: f32) -> Vec3 {
     let dist = relative_pos.length();
     if dist < 0.001 {
@@ -159,38 +240,4 @@ fn calculate_acceleration(min_r: f32, relative_pos: Vec3, attraction: f32, max_f
     };
 
     normalized_pos * force / normalized_dist
-}
-
-/// Applique les vélocités et gère les collisions avec les murs
-pub fn apply_movement(
-    sim_params: Res<SimulationParameters>,
-    grid: Res<GridParameters>,
-    boundary_mode: Res<BoundaryMode>,
-    mut particles: Query<(&mut Transform, &mut Velocity), With<Particle>>,
-) {
-    // Skip si en pause
-    if sim_params.simulation_speed == crate::resources::simulation::SimulationSpeed::Paused {
-        return;
-    }
-
-    // Calculer le nombre d'itérations basé sur la vitesse
-    let iterations = match sim_params.simulation_speed {
-        crate::resources::simulation::SimulationSpeed::Paused => 0,
-        crate::resources::simulation::SimulationSpeed::Normal => 1,
-        crate::resources::simulation::SimulationSpeed::Fast => 2,
-        crate::resources::simulation::SimulationSpeed::VeryFast => 4,
-    };
-
-    let base_delta = 0.016; // 60 FPS fixe
-
-    // Appliquer le mouvement plusieurs fois pour accélérer la simulation
-    for _ in 0..iterations {
-        for (mut transform, mut velocity) in particles.iter_mut() {
-            // Appliquer la vélocité
-            transform.translation += velocity.0 * base_delta;
-
-            // Gérer les bords selon le mode
-            grid.apply_bounds(&mut transform.translation, &mut velocity.0, *boundary_mode);
-        }
-    }
 }

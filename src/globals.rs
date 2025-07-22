@@ -4,6 +4,9 @@ pub const DEFAULT_SIMULATION_COUNT: usize = 4;
 pub const DEFAULT_EPOCH_DURATION: f32 = 60.0; // secondes
 pub const DEFAULT_PARTICLES_PER_TYPE: usize = DEFAULT_PARTICLE_COUNT / DEFAULT_PARTICLE_TYPES;
 
+/// Timestep fixe pour la physique (60 FPS) - indépendant de la vitesse de simulation
+pub const PHYSICS_TIMESTEP: f32 = 0.008;
+
 // Paramètres de la grille
 pub const DEFAULT_GRID_WIDTH: f32 = 400.0;
 pub const DEFAULT_GRID_HEIGHT: f32 = 400.0;

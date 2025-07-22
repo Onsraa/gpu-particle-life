@@ -27,8 +27,8 @@ use crate::{
     },
     states::app::AppState,
     states::simulation::SimulationState,
+    globals::{PARTICLE_RADIUS, PHYSICS_TIMESTEP}, // AJOUT : import de PHYSICS_TIMESTEP
 };
-use crate::globals::PARTICLE_RADIUS;
 
 /// Chemin vers le shader
 const SHADER_ASSET_PATH: &str = "shaders/particle_life.wgsl";
@@ -162,7 +162,7 @@ fn extract_simulation_params(
     commands.insert_resource(sim_params.clone());
 }
 
-/// Système pour extraire les données des particules du monde principal
+/// MODIFICATION PRINCIPALE : Système d'extraction avec timestep fixe
 fn extract_particle_data(
     mut extracted_data: ResMut<ExtractedParticleData>,
     compute_enabled: Extract<Res<ComputeEnabled>>,
@@ -180,14 +180,10 @@ fn extract_particle_data(
     extracted_data.genomes.clear();
     extracted_data.food_positions.clear();
 
-    // IMPORTANT: Ne PAS appliquer le multiplicateur de vitesse au delta_time
-    // Le delta_time doit rester constant pour que les forces soient indépendantes de la vitesse de simulation
-    let base_delta = 0.016; // 60 FPS fixe pour la physique
-
-    // Toujours mettre à jour les paramètres
+    // MODIFICATION CRITIQUE : Toujours utiliser le timestep physique constant
     extracted_data.params = GpuSimulationParams {
         delta_time: if compute_enabled.0 && sim_params.simulation_speed != SimulationSpeed::Paused {
-            base_delta // Utiliser un delta fixe pour la physique
+            PHYSICS_TIMESTEP // CHANGEMENT : Utiliser la constante globale
         } else {
             0.0
         },
@@ -442,7 +438,7 @@ impl FromWorld for ParticleComputePipeline {
                 (
                     // Particles in (read-only)
                     storage_buffer_read_only::<GpuParticle>(false),
-                    // Particles out (write-only) 
+                    // Particles out (write-only)
                     storage_buffer::<GpuParticle>(false),
                     // Parameters
                     uniform_buffer::<GpuSimulationParams>(false),
@@ -476,7 +472,7 @@ impl FromWorld for ParticleComputePipeline {
     }
 }
 
-/// Nœud du graphe de rendu pour exécuter le compute shader
+/// MODIFICATION PRINCIPALE : Nœud GPU avec itérations cohérentes
 struct ParticleComputeNode;
 
 impl Default for ParticleComputeNode {
@@ -510,7 +506,7 @@ impl render_graph::Node for ParticleComputeNode {
             return Ok(());
         }
 
-        // Calculer le nombre d'itérations basé sur la vitesse de simulation
+        // MODIFICATION CRITIQUE : Même logique d'itération que le CPU
         let iterations = match sim_params.simulation_speed {
             SimulationSpeed::Paused => 0,
             SimulationSpeed::Normal => 1,
@@ -518,11 +514,14 @@ impl render_graph::Node for ParticleComputeNode {
             SimulationSpeed::VeryFast => 4,
         };
 
-        // Exécuter le compute shader le nombre de fois nécessaire
-        for _ in 0..iterations {
+        // CHAQUE itération = un pas physique complet avec timestep fixe
+        for iteration in 0..iterations {
             let mut pass = render_context
                 .command_encoder()
-                .begin_compute_pass(&ComputePassDescriptor::default());
+                .begin_compute_pass(&ComputePassDescriptor {
+                    label: Some(&format!("Particle Compute Pass {}", iteration)),
+                    timestamp_writes: None,
+                });
 
             pass.set_bind_group(0, &buffers.bind_group, &[]);
             pass.set_pipeline(compute_pipeline);
@@ -533,7 +532,8 @@ impl render_graph::Node for ParticleComputeNode {
 
             drop(pass);
 
-            // Copier les résultats du buffer out vers le buffer in pour la prochaine itération
+            // CRITIQUE : Copier les résultats pour la prochaine itération
+            // Cela permet au GPU de voir les nouvelles positions comme le CPU
             render_context.command_encoder().copy_buffer_to_buffer(
                 &buffers.particle_buffer_out,
                 0,
@@ -547,7 +547,7 @@ impl render_graph::Node for ParticleComputeNode {
     }
 }
 
-/// Système pour copier les résultats dans un buffer accessible
+/// Système pour copier les résultats dans un buffer accessible (inchangé)
 fn write_compute_results(
     buffers: Option<Res<ParticleBuffers>>,
     render_device: Res<RenderDevice>,
@@ -612,15 +612,6 @@ fn write_compute_results(
         let gpu_particles: &[GpuParticle] = bytemuck::cast_slice(&data);
         results_buffer.data.copy_from_slice(gpu_particles);
 
-        // LOG DE DEBUG
-        if !results_buffer.data.is_empty() {
-            let first_particle = &results_buffer.data[0];
-            info!("GPU particle 0: pos={:?}, vel={:?}", 
-            first_particle.position, 
-            first_particle.velocity
-        );
-        }
-
         // Mettre à jour directement les résultats synchronisés
         synced_results.data.clear();
         for (i, (entity, _, _, _, _)) in extracted_data.particles.iter().enumerate() {
@@ -631,7 +622,7 @@ fn write_compute_results(
     }
 }
 
-/// Système pour appliquer les résultats du compute shader aux entités
+/// Système pour appliquer les résultats du compute shader aux entités (inchangé)
 pub fn apply_compute_results(
     mut particles: Query<(&mut Transform, &mut Velocity), With<Particle>>,
     results: Res<SyncedComputeResults>,

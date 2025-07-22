@@ -3,8 +3,8 @@ use crate::states::app::AppState;
 use crate::systems::spawning_visualizer::spawn_visualizer_simulation;
 use crate::systems::{
     collision::detect_food_collision,
-    movement::{apply_movement, calculate_forces},
-    spatial_grid::{SpatialGrid, update_spatial_grid},
+    movement::physics_simulation_system, // NOUVEAU : système physique unifié
+    spatial_grid::SpatialGrid,
     spawning::spawn_food,
 };
 use crate::plugins::compute::{ComputeEnabled, apply_compute_results};
@@ -20,13 +20,11 @@ impl Plugin for VisualizerPlugin {
                 (spawn_visualizer_simulation, spawn_food).chain(),
             )
 
-            // Systèmes de mise à jour pendant la visualisation
+            // NOUVEAU : Utiliser le système physique unifié pour CPU
             .add_systems(
                 Update,
                 (
-                    update_spatial_grid,
-                    calculate_forces,
-                    apply_movement,
+                    physics_simulation_system, // CHANGEMENT : système unifié
                     detect_food_collision,
                 )
                     .chain()
@@ -34,6 +32,7 @@ impl Plugin for VisualizerPlugin {
                     .run_if(compute_disabled),
             )
 
+            // Système GPU (inchangé)
             .add_systems(
                 Update,
                 (

@@ -6,11 +6,11 @@ use crate::systems::debug_particles::debug_particle_movement;
 use crate::systems::{
     collision::detect_food_collision,
     debug::debug_scores,
-    movement::{apply_movement, calculate_forces},
+    movement::physics_simulation_system, // NOUVEAU : système physique unifié
     spatial_grid::{SpatialGrid, update_spatial_grid},
     spawning::{spawn_food, spawn_simulations_with_particles, EntitiesSpawned},
     reset::reset_for_new_epoch,
-    population_save::{PopulationSaveEvents, AvailablePopulations, process_save_requests, load_available_populations}, // NOUVEAU
+    population_save::{PopulationSaveEvents, AvailablePopulations, process_save_requests, load_available_populations},
 };
 use crate::plugins::compute::{ComputeEnabled, apply_compute_results};
 
@@ -24,10 +24,10 @@ impl Plugin for SimulationPlugin {
             // Ressources
             .init_resource::<SpatialGrid>()
             .init_resource::<EntitiesSpawned>()
-            .init_resource::<PopulationSaveEvents>() // NOUVEAU
-            .init_resource::<AvailablePopulations>() // NOUVEAU
+            .init_resource::<PopulationSaveEvents>()
+            .init_resource::<AvailablePopulations>()
 
-            // NOUVEAU : Charger les populations au démarrage
+            // Charger les populations au démarrage
             .add_systems(Startup, load_available_populations)
 
             // Transition vers l'état de simulation
@@ -55,19 +55,16 @@ impl Plugin for SimulationPlugin {
                     .run_if(in_state(AppState::Simulation)),
             )
 
+            // NOUVEAU : Système physique unifié pour CPU
             .add_systems(
                 Update,
-                (
-                    update_spatial_grid,
-                    calculate_forces,
-                    apply_movement,
-                )
-                    .chain()
+                physics_simulation_system
                     .run_if(in_state(SimulationState::Running))
                     .run_if(in_state(AppState::Simulation))
                     .run_if(compute_disabled),
             )
 
+            // Système GPU (inchangé)
             .add_systems(
                 Update,
                 apply_compute_results
@@ -76,6 +73,7 @@ impl Plugin for SimulationPlugin {
                     .run_if(compute_enabled),
             )
 
+            // Systèmes généraux (inchangés)
             .add_systems(
                 Update,
                 (
@@ -83,7 +81,7 @@ impl Plugin for SimulationPlugin {
                     check_epoch_end,
                     debug_scores,
                     debug_particle_movement,
-                    process_save_requests, // NOUVEAU : Traiter les demandes de sauvegarde
+                    process_save_requests,
                 )
                     .chain()
                     .run_if(in_state(SimulationState::Running))

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::components::{
     particle::{Particle, ParticleType},
-    simulation::SimulationId,
+    simulation::{Simulation, SimulationId},
 };
 use crate::globals::*;
 
@@ -14,12 +14,12 @@ pub const CELL_SIZE: f32 = DEFAULT_MAX_FORCE_RANGE / 2.0;
 #[derive(Resource, Default)]
 pub struct SpatialGrid {
     /// Map de (simulation_id, cell_key) -> Vec<(Entity, position, type)>
-    cells: HashMap<(usize, IVec3), Vec<(Entity, Vec3, usize)>>,
+    pub cells: HashMap<(usize, IVec3), Vec<(Entity, Vec3, usize)>>, // CHANGEMENT : rendu public
 }
 
 impl SpatialGrid {
     /// Calcule la clé de cellule pour une position
-    fn get_cell_key(position: Vec3) -> IVec3 {
+    pub fn get_cell_key(position: Vec3) -> IVec3 {
         IVec3::new(
             (position.x / CELL_SIZE).floor() as i32,
             (position.y / CELL_SIZE).floor() as i32,
@@ -40,7 +40,7 @@ impl SpatialGrid {
         neighbors
     }
 
-    /// Reconstruit la grille spatiale
+    /// Reconstruit la grille spatiale (méthode originale)
     pub fn rebuild(
         &mut self,
         particles: &Query<(Entity, &Transform, &ParticleType, &ChildOf), With<Particle>>,
@@ -82,7 +82,7 @@ impl SpatialGrid {
     }
 }
 
-/// Système pour reconstruire la grille spatiale
+/// Système pour reconstruire la grille spatiale (système original)
 pub fn update_spatial_grid(
     mut spatial_grid: ResMut<SpatialGrid>,
     particles: Query<(Entity, &Transform, &ParticleType, &ChildOf), With<Particle>>,
