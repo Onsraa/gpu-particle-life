@@ -12,3 +12,4 @@ pub mod reset;
 pub mod viewport_overlay;
 pub mod population_save;
 pub mod spawning_visualizer;
+pub mod torus_spatial;

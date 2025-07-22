@@ -10,15 +10,18 @@ use crate::globals::*;
 use crate::resources::boundary::BoundaryMode;
 use crate::resources::{grid::GridParameters, simulation::SimulationParameters};
 use crate::resources::particle_types::ParticleTypesConfig;
-use crate::systems::spatial_grid::SpatialGrid;
+use crate::systems::torus_spatial::{ParticleTree, TorusNeighborCache, get_torus_neighbors};
 
-/// Système principal qui gère les itérations physiques avec timestep fixe
+/// Système principal qui gère les itérations physiques avec timestep fixe - AMÉLIORÉ avec torus
 pub fn physics_simulation_system(
     sim_params: Res<SimulationParameters>,
     particle_config: Res<ParticleTypesConfig>,
-    mut spatial_grid: ResMut<SpatialGrid>, // Mutable pour mise à jour multiple
     grid: Res<GridParameters>,
     boundary_mode: Res<BoundaryMode>,
+    // NOUVEAU : Systèmes spatiaux
+    particle_tree: Res<ParticleTree>,
+    torus_cache: Res<TorusNeighborCache>,
+    // Queries CORRIGÉES
     simulations: Query<(&SimulationId, &Genotype), With<Simulation>>,
     mut particles: Query<
         (Entity, &mut Transform, &mut Velocity, &ParticleType, &ChildOf),
@@ -31,7 +34,7 @@ pub fn physics_simulation_system(
         return;
     }
 
-    // Calculer le nombre d'itérations physiques selon la vitesse de simulation
+    // Calculer le nombre d'itérations selon la vitesse
     let iterations = match sim_params.simulation_speed {
         crate::resources::simulation::SimulationSpeed::Paused => 0,
         crate::resources::simulation::SimulationSpeed::Normal => 1,
@@ -41,21 +44,20 @@ pub fn physics_simulation_system(
 
     // BOUCLE PRINCIPALE : chaque itération fait UN pas physique complet
     for _iteration in 0..iterations {
-        // 1. Mettre à jour la grille spatiale avec les positions actuelles
-        // CORRECTION : Créer une query compatible pour rebuild()
-        rebuild_spatial_grid(&mut spatial_grid, &particles, &simulations);
-
-        // 2. Calculer les forces pour cette itération
-        let particle_forces = calculate_forces_for_timestep(
+        // 1. Calculer les forces pour cette itération (AMÉLIORÉ avec torus)
+        let particle_forces = calculate_forces_with_torus(
             &sim_params,
             &particle_config,
-            &spatial_grid,
+            &grid,
+            &boundary_mode,
+            &particle_tree,
+            &torus_cache,
             &simulations,
             &particles,
             &food_query,
         );
 
-        // 3. Appliquer les forces et le mouvement pour cette itération
+        // 2. Appliquer les forces et le mouvement (inchangé)
         apply_physics_step(
             &grid,
             &boundary_mode,
@@ -66,33 +68,14 @@ pub fn physics_simulation_system(
     }
 }
 
-/// CORRECTION : Fonction helper pour rebuild avec les bons types
-fn rebuild_spatial_grid(
-    spatial_grid: &mut SpatialGrid,
-    particles: &Query<(Entity, &mut Transform, &mut Velocity, &ParticleType, &ChildOf), With<Particle>>,
-    simulations: &Query<(&SimulationId, &Genotype), With<Simulation>>,
-) {
-    spatial_grid.cells.clear(); // Accès direct au champ cells
-
-    // Reconstruire manuellement avec les données disponibles
-    for (entity, transform, _, particle_type, parent) in particles.iter() {
-        if let Ok((sim_id, _)) = simulations.get(parent.parent()) {
-            let cell_key = SpatialGrid::get_cell_key(transform.translation);
-            let key = (sim_id.0, cell_key);
-
-            spatial_grid.cells
-                .entry(key)
-                .or_default()
-                .push((entity, transform.translation, particle_type.0));
-        }
-    }
-}
-
-/// Calcule les forces pour UN pas de temps physique
-fn calculate_forces_for_timestep(
+/// NOUVEAU : Calcule les forces avec support du torus spatial
+fn calculate_forces_with_torus(
     sim_params: &SimulationParameters,
     particle_config: &ParticleTypesConfig,
-    spatial_grid: &SpatialGrid,
+    grid: &GridParameters,
+    boundary_mode: &BoundaryMode,
+    particle_tree: &ParticleTree,
+    torus_cache: &TorusNeighborCache,
     simulations: &Query<(&SimulationId, &Genotype), With<Simulation>>,
     particles: &Query<(Entity, &mut Transform, &mut Velocity, &ParticleType, &ChildOf), With<Particle>>,
     food_query: &Query<(&Transform, &ViewVisibility), (With<Food>, Without<Particle>)>,
@@ -111,35 +94,59 @@ fn calculate_forces_for_timestep(
         .map(|(transform, _)| transform.translation)
         .collect();
 
-    // Collecter les données des particules pour éviter les conflits
-    let particle_data: Vec<_> = particles
-        .iter()
-        .filter_map(|(entity, transform, _, particle_type, parent)| {
-            simulations
-                .get(parent.parent())
-                .ok()
-                .map(|(sim_id, _)| (entity, transform.translation, particle_type.0, sim_id.0))
-        })
-        .collect();
-
     // Calculer les forces pour chaque particule
     let mut forces = std::collections::HashMap::new();
 
-    for (entity_a, pos_a, type_a, sim_id_a) in &particle_data {
-        let mut total_force = Vec3::ZERO;
+    for (entity_a, transform, _, particle_type, parent) in particles.iter() {
+        let Ok((sim_id, _)) = simulations.get(parent.parent()) else { continue; };
 
-        if let Some(genotype) = genotypes_cache.get(sim_id_a) {
-            // === FORCES AVEC LES AUTRES PARTICULES ===
-            let neighbors = spatial_grid.get_potential_neighbors(*pos_a, *sim_id_a);
+        let mut total_force = Vec3::ZERO;
+        let position = transform.translation;
+
+        if let Some(genotype) = genotypes_cache.get(&sim_id.0) {
+            // === FORCES AVEC LES AUTRES PARTICULES (AMÉLIORÉ AVEC TORUS) ===
+
+            // NOUVEAU : Utiliser le système spatial avec support torus
+            let neighbors = get_torus_neighbors(
+                torus_cache,
+                particle_tree,
+                sim_id.0,
+                entity_a,
+                position,
+                sim_params.max_force_range,
+                *boundary_mode,
+            );
+
             let max_interactions = 100;
             let mut interaction_count = 0;
 
-            for (entity_b, pos_b, type_b) in neighbors {
-                if entity_a == &entity_b || interaction_count >= max_interactions {
+            for (neighbor_entity, neighbor_pos, _) in neighbors {
+                if interaction_count >= max_interactions {
+                    break;
+                }
+
+                // Récupérer les données du voisin
+                let Ok((_, neighbor_transform, _, neighbor_type, neighbor_parent)) =
+                    particles.get(neighbor_entity) else { continue; };
+
+                // Vérifier que c'est la même simulation
+                let Ok((neighbor_sim_id, _)) = simulations.get(neighbor_parent.parent()) else { continue; };
+                if neighbor_sim_id.0 != sim_id.0 {
                     continue;
                 }
 
-                let distance_vec = pos_b - *pos_a;
+                // MODIFICATION CRITIQUE : Utiliser la logique de direction torus
+                let distance_vec = match *boundary_mode {
+                    BoundaryMode::Teleport => {
+                        // Utiliser le calcul de direction torus
+                        torus_cache.torus_direction_vector(position, neighbor_transform.translation)
+                    }
+                    BoundaryMode::Bounce => {
+                        // Direction normale
+                        neighbor_transform.translation - position
+                    }
+                };
+
                 let distance_squared = distance_vec.dot(distance_vec);
 
                 if distance_squared > sim_params.max_force_range * sim_params.max_force_range ||
@@ -150,7 +157,7 @@ fn calculate_forces_for_timestep(
                 interaction_count += 1;
 
                 let min_r = particle_config.type_count as f32 * PARTICLE_RADIUS;
-                let attraction = genotype.get_scaled_force(*type_a, type_b);
+                let attraction = genotype.get_scaled_force(particle_type.0, neighbor_type.0);
                 let acceleration = calculate_acceleration(
                     min_r,
                     distance_vec,
@@ -161,13 +168,24 @@ fn calculate_forces_for_timestep(
                 total_force += acceleration * sim_params.max_force_range;
             }
 
-            // === FORCES AVEC LA NOURRITURE ===
-            let food_force = genotype.get_scaled_food_force(*type_a);
+            // === FORCES AVEC LA NOURRITURE (AMÉLIORÉES AVEC TORUS) ===
+            let food_force = genotype.get_scaled_food_force(particle_type.0);
 
             if food_force.abs() > 0.001 {
                 for food_pos in &food_positions {
-                    let distance_vec = *food_pos - *pos_a;
-                    let distance = distance_vec.length();
+                    // NOUVEAU : Utiliser le calcul de distance/direction torus pour la nourriture aussi
+                    let (distance, distance_vec) = match *boundary_mode {
+                        BoundaryMode::Teleport => {
+                            let dir_vec = torus_cache.torus_direction_vector(position, *food_pos);
+                            let dist = dir_vec.length();
+                            (dist, dir_vec)
+                        }
+                        BoundaryMode::Bounce => {
+                            let dir_vec = *food_pos - position;
+                            let dist = dir_vec.length();
+                            (dist, dir_vec)
+                        }
+                    };
 
                     if distance > 0.001 && distance < sim_params.max_force_range {
                         let force_direction = distance_vec.normalize();
@@ -180,13 +198,13 @@ fn calculate_forces_for_timestep(
             }
         }
 
-        forces.insert(*entity_a, total_force);
+        forces.insert(entity_a, total_force);
     }
 
     forces
 }
 
-/// Applique les forces et le mouvement pour UN pas de temps physique
+/// Applique les forces et le mouvement pour UN pas de temps physique (inchangé)
 fn apply_physics_step(
     grid: &GridParameters,
     boundary_mode: &BoundaryMode,

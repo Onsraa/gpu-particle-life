@@ -3,7 +3,7 @@ const PARTICLE_RADIUS: f32 = 2.5;
 const FOOD_RADIUS: f32 = 1.0;
 const MIN_DISTANCE: f32 = 0.001;
 const PARTICLE_REPULSION_STRENGTH: f32 = 100.0;
-const FORCE_SCALE_FACTOR: f32 = 80.0; // NOUVEAU FACTEUR
+const FORCE_SCALE_FACTOR: f32 = 80.0;
 const MAX_VELOCITY: f32 = 200.0;
 const PARTICLE_MASS: f32 = 1.0;
 const VELOCITY_HALF_LIFE: f32 = 0.043;
@@ -65,7 +65,6 @@ fn decode_force(genome_low: u32, genome_high: u32, type_a: u32, type_b: u32, typ
     let normalized = (f32(raw_value) / max_value) * 2.0 - 1.0;
 
     // Transformation non-linéaire pour plus de variété
-    // Utilise x^0.7 signé pour avoir une meilleure distribution
     let shaped = sign(normalized) * pow(abs(normalized), 0.7);
 
     // Retourner la valeur mise à l'échelle
@@ -93,7 +92,68 @@ fn decode_food_force(food_genome: u32, particle_type: u32, type_count: u32) -> f
     return shaped * FORCE_SCALE_FACTOR;
 }
 
-// Calcule l'accélération entre deux particules (similaire au projet 2D)
+// NOUVEAU : Calcule la distance minimale dans un espace torus 3D
+fn torus_distance(pos1: vec3<f32>, pos2: vec3<f32>, grid_size: vec3<f32>) -> f32 {
+    let delta = pos2 - pos1;
+
+    // Calculer la distance minimale sur chaque axe
+    let dx = abs(delta.x);
+    let min_dx = min(dx, grid_size.x - dx);
+
+    let dy = abs(delta.y);
+    let min_dy = min(dy, grid_size.y - dy);
+
+    let dz = abs(delta.z);
+    let min_dz = min(dz, grid_size.z - dz);
+
+    return sqrt(min_dx * min_dx + min_dy * min_dy + min_dz * min_dz);
+}
+
+// NOUVEAU : Calcule le vecteur de direction minimal dans un espace torus 3D
+fn torus_direction_vector(from: vec3<f32>, to: vec3<f32>, grid_size: vec3<f32>) -> vec3<f32> {
+    var direction = vec3<f32>(0.0);
+
+    // Axe X
+    let dx = to.x - from.x;
+    if (abs(dx) <= grid_size.x / 2.0) {
+        direction.x = dx;
+    } else {
+        // Plus court de passer par l'autre côté
+        if (dx > 0.0) {
+            direction.x = dx - grid_size.x;
+        } else {
+            direction.x = dx + grid_size.x;
+        }
+    }
+
+    // Axe Y
+    let dy = to.y - from.y;
+    if (abs(dy) <= grid_size.y / 2.0) {
+        direction.y = dy;
+    } else {
+        if (dy > 0.0) {
+            direction.y = dy - grid_size.y;
+        } else {
+            direction.y = dy + grid_size.y;
+        }
+    }
+
+    // Axe Z
+    let dz = to.z - from.z;
+    if (abs(dz) <= grid_size.z / 2.0) {
+        direction.z = dz;
+    } else {
+        if (dz > 0.0) {
+            direction.z = dz - grid_size.z;
+        } else {
+            direction.z = dz + grid_size.z;
+        }
+    }
+
+    return direction;
+}
+
+// Calcule l'accélération entre deux particules
 fn acceleration(rmin: f32, dpos: vec3<f32>, a: f32) -> vec3<f32> {
     let dist = length(dpos);
     if (dist < 0.001) {
@@ -201,7 +261,11 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let min_distance = params.min_distance;
     let max_distance = params.max_force_range;
 
-    // === Forces avec les autres particules ===
+    // NOUVEAU : Taille de grille pour les calculs torus
+    let grid_size = vec3<f32>(params.grid_width, params.grid_height, params.grid_depth);
+    let is_teleport_mode = params.boundary_mode == 1u;
+
+    // === Forces avec les autres particules (AMÉLIORÉ AVEC TORUS) ===
     var interactions_count = 0u;
 
     for (var i = 0u; i < params.particle_count && interactions_count < MAX_INTERACTIONS_PER_PARTICLE; i++) {
@@ -217,8 +281,19 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
             continue;
         }
 
-        let distance_vec = other.position - particle.position;
-        let distance_squared = dot(distance_vec, distance_vec);
+        // MODIFICATION PRINCIPALE : Calcul de distance selon le mode de bord
+        let distance_vec: vec3<f32>;
+        let distance_squared: f32;
+
+        if (is_teleport_mode) {
+            // Mode torus : utiliser la direction minimale
+            distance_vec = torus_direction_vector(particle.position, other.position, grid_size);
+            distance_squared = dot(distance_vec, distance_vec);
+        } else {
+            // Mode bounce : distance normale
+            distance_vec = other.position - particle.position;
+            distance_squared = dot(distance_vec, distance_vec);
+        }
 
         // Vérifier si dans la portée
         if (distance_squared == 0.0 || distance_squared > max_distance * max_distance) {
@@ -227,10 +302,10 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         interactions_count++;
 
-        // Calculer la force (maintenant déjà mise à l'échelle)
+        // Calculer la force
         let attraction = decode_force(genome_low, genome_high, particle.particle_type, other.particle_type, params.type_count);
 
-        // IMPORTANT: Normaliser les positions par max_distance comme dans le projet 2D
+        // Normaliser les positions par max_distance
         let dpos_normalized = distance_vec / max_distance;
         let rmin_normalized = min_distance / max_distance;
 
@@ -240,7 +315,7 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
         total_force += accel * max_distance;
     }
 
-    // === Forces avec la nourriture ===
+    // === Forces avec la nourriture (AMÉLIORÉES AVEC TORUS) ===
     let particle_food_force = decode_food_force(food_genome, particle.particle_type, params.type_count);
 
     if (abs(particle_food_force) > 0.001) {
@@ -251,11 +326,22 @@ fn update(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 continue;
             }
 
-            let distance_vec = food.position - particle.position;
-            let distance = length(distance_vec);
+            // NOUVEAU : Calcul de distance/direction selon le mode de bord pour la nourriture
+            let distance_vec_food: vec3<f32>;
+            let distance: f32;
+
+            if (is_teleport_mode) {
+                // Mode torus pour la nourriture
+                distance_vec_food = torus_direction_vector(particle.position, food.position, grid_size);
+                distance = length(distance_vec_food);
+            } else {
+                // Mode bounce pour la nourriture
+                distance_vec_food = food.position - particle.position;
+                distance = length(distance_vec_food);
+            }
 
             if (distance > MIN_DISTANCE && distance < max_distance) {
-                let force_direction = normalize(distance_vec);
+                let force_direction = normalize(distance_vec_food);
                 let distance_factor = pow(min((FOOD_RADIUS * 2.0) / distance, 1.0), 0.5);
                 let force_magnitude = particle_food_force * distance_factor;
                 total_force += force_direction * force_magnitude;

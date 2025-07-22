@@ -4,6 +4,7 @@ use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::math::{EulerRot, Quat, Vec2, Vec3};
 use bevy::prelude::{Camera, MouseButton, Query, Res, Transform, With};
 
+/// Système d'orbite de caméra - AMÉLIORÉ avec distance adaptative
 pub fn orbit(
     mut camera: Query<&mut Transform, With<Camera>>,
     camera_settings: Res<CameraSettings>,
@@ -28,7 +29,10 @@ pub fn orbit(
             transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, roll);
 
             let target = Vec3::ZERO;
-            transform.translation = target - transform.forward() * camera_settings.orbit_distance;
+
+            let orbit_distance = camera_settings.orbit_distance;
+
+            transform.translation = target - transform.forward() * orbit_distance;
         }
     }
 }

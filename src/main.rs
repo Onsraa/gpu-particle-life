@@ -15,6 +15,7 @@ use crate::plugins::ui::UIPlugin;
 use crate::plugins::visualizer::VisualizerPlugin;
 use crate::states::app::AppState;
 use plugins::{compute::ParticleComputePlugin, setup::SetupPlugin, simulation::SimulationPlugin};
+use crate::systems::torus_spatial::TorusSpatialPlugin;
 
 fn main() {
     App::new()
@@ -47,6 +48,7 @@ fn main() {
             CameraPlugin,
             UIPlugin,
             VisualizerPlugin,
+            TorusSpatialPlugin,
         ))
         .add_systems(Update, (make_visible, exit_game))
         .run();

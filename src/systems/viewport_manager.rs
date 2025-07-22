@@ -3,6 +3,7 @@ use bevy::render::view::RenderLayers;
 use bevy::render::camera::{ClearColorConfig, Projection, PerspectiveProjection};
 use bevy::window::WindowResized;
 use crate::ui::force_matrix::ForceMatrixUI;
+use crate::resources::grid::GridParameters;
 
 /// Marqueur pour les caméras des viewports
 #[derive(Component)]
@@ -33,7 +34,6 @@ pub fn delayed_viewport_update(
     mut timer: Local<Option<Timer>>,
     mut update_count: Local<u32>,
 ) {
-    // Forcer plusieurs mises à jour dans les premières secondes
     if *update_count < 10 {
         if timer.is_none() {
             *timer = Some(Timer::from_seconds(0.1, TimerMode::Once));
@@ -50,23 +50,41 @@ pub fn delayed_viewport_update(
     }
 }
 
+/// Calcule la distance adaptative de la caméra selon la taille de la grille
+fn calculate_adaptive_camera_distance(grid: &GridParameters, viewport_count: usize) -> f32 {
+    let diagonal_3d = (grid.width.powi(2) + grid.height.powi(2) + grid.depth.powi(2)).sqrt();
+    let base_distance = diagonal_3d * 0.8;
+
+    let viewport_factor = match viewport_count {
+        1 => 1.0,
+        2 => 1.1,
+        3..=4 => 1.2,
+        _ => 1.3,
+    };
+
+    let final_distance = base_distance * viewport_factor;
+    info!("🎥 Distance caméra adaptée : {:.0}", final_distance);
+    final_distance
+}
+
 /// Gère les viewports et caméras pour les simulations sélectionnées
 pub fn update_viewports(
     mut commands: Commands,
     ui_state: Res<ForceMatrixUI>,
     ui_space: Res<UISpace>,
+    grid_params: Res<GridParameters>,
     windows: Query<&Window>,
     mut existing_cameras: Query<(Entity, &mut Camera, &mut Transform, &mut RenderLayers, &mut ViewportCamera)>,
     force_update: Option<Res<ForceViewportUpdate>>,
     mut resize_events: EventReader<WindowResized>,
 ) {
-    // Vérifier si on doit mettre à jour
     let has_resize = !resize_events.is_empty();
-    resize_events.clear(); // Consommer les événements
+    resize_events.clear();
 
     let should_update = force_update.is_some() ||
         ui_state.is_changed() ||
         ui_space.is_changed() ||
+        grid_params.is_changed() ||
         has_resize;
 
     if force_update.is_some() {
@@ -77,19 +95,13 @@ pub fn update_viewports(
         return;
     }
 
-    // Récupérer la fenêtre
     let Ok(window) = windows.single() else {
         return;
     };
 
-    // Obtenir le scale factor actuel
     let scale_factor = window.resolution.scale_factor();
-
-    // Calculer l'espace disponible en tenant compte du scale factor
     let window_width_physical = window.resolution.physical_width() as f32;
     let window_height_physical = window.resolution.physical_height() as f32;
-
-    // Convertir l'espace UI en pixels physiques
     let ui_right_physical = ui_space.right_panel_width * scale_factor;
     let ui_top_physical = ui_space.top_panel_height * scale_factor;
 
@@ -103,10 +115,8 @@ pub fn update_viewports(
     let mut selected_sims: Vec<usize> = ui_state.selected_simulations.iter().cloned().collect();
     selected_sims.sort();
 
-    // Collecter les caméras existantes
     let mut cameras_to_reuse: Vec<Entity> = existing_cameras.iter().map(|(e, _, _, _, _)| e).collect();
 
-    // Si aucune simulation sélectionnée, désactiver toutes les caméras
     if selected_sims.is_empty() {
         for (_, mut camera, _, _, _) in existing_cameras.iter_mut() {
             camera.is_active = false;
@@ -114,12 +124,10 @@ pub fn update_viewports(
         return;
     }
 
-    // Calculer les viewports pour chaque simulation
     let viewport_count = selected_sims.len();
-    let camera_distance = 600.0 + (viewport_count as f32 * 100.0);
+    let camera_distance = calculate_adaptive_camera_distance(&grid_params, viewport_count);
 
     for (idx, &sim_id) in selected_sims.iter().enumerate() {
-        // Calculer la position et taille du viewport en pixels physiques
         let (x, y, w, h) = calculate_viewport_rect(
             idx,
             viewport_count,
@@ -129,13 +137,11 @@ pub fn update_viewports(
             window_height_physical
         );
 
-        // S'assurer que les dimensions sont valides
         if w == 0 || h == 0 {
             continue;
         }
 
         if let Some(camera_entity) = cameras_to_reuse.pop() {
-            // Réutiliser une caméra existante
             if let Ok((_, mut camera, mut transform, mut render_layers, mut viewport_camera)) = existing_cameras.get_mut(camera_entity) {
                 update_camera_viewport(
                     &mut camera,
@@ -149,12 +155,10 @@ pub fn update_viewports(
                 );
             }
         } else {
-            // Créer une nouvelle caméra
             spawn_viewport_camera(&mut commands, x, y, w, h, idx, sim_id, camera_distance);
         }
     }
 
-    // Désactiver les caméras non utilisées
     for camera_entity in cameras_to_reuse {
         if let Ok((_, mut camera, _, _, _)) = existing_cameras.get_mut(camera_entity) {
             camera.is_active = false;
@@ -171,37 +175,62 @@ fn calculate_viewport_rect(
     ui_top: f32,
     window_height: f32
 ) -> (u32, u32, u32, u32) {
+    let margin = 8.0; // Marge plus grande pour éviter les chevauchements
+
     let (x, y_from_top, w, h) = match total {
-        1 => (0.0, 0.0, available_width, available_height),
+        1 => (
+            margin,
+            margin,
+            available_width - 2.0 * margin,
+            available_height - 2.0 * margin
+        ),
         2 => {
-            let width = available_width / 2.0;
-            (idx as f32 * width, 0.0, width, available_height)
+            let width = (available_width - 3.0 * margin) / 2.0;
+            (
+                margin + (idx as f32 * (width + margin)),
+                margin,
+                width,
+                available_height - 2.0 * margin
+            )
         },
         3 => {
-            let width = available_width / 3.0;
-            (idx as f32 * width, 0.0, width, available_height)
+            let width = (available_width - 4.0 * margin) / 3.0;
+            (
+                margin + (idx as f32 * (width + margin)),
+                margin,
+                width,
+                available_height - 2.0 * margin
+            )
         },
         4 => {
-            let width = available_width / 2.0;
-            let height = available_height / 2.0;
+            let width = (available_width - 3.0 * margin) / 2.0;
+            let height = (available_height - 3.0 * margin) / 2.0;
             let col = idx % 2;
             let row = idx / 2;
-            (col as f32 * width, row as f32 * height, width, height)
+            (
+                margin + (col as f32 * (width + margin)),
+                margin + (row as f32 * (height + margin)),
+                width,
+                height
+            )
         },
         _ => {
             let cols = (total as f32).sqrt().ceil() as usize;
             let rows = ((total as f32) / (cols as f32)).ceil() as usize;
-            let width = available_width / cols as f32;
-            let height = available_height / rows as f32;
+            let width = (available_width - (cols + 1) as f32 * margin) / cols as f32;
+            let height = (available_height - (rows + 1) as f32 * margin) / rows as f32;
             let col = idx % cols;
             let row = idx / cols;
-            (col as f32 * width, row as f32 * height, width, height)
+            (
+                margin + (col as f32 * (width + margin)),
+                margin + (row as f32 * (height + margin)),
+                width,
+                height
+            )
         }
     };
 
-    // Convertir en coordonnées Bevy (Y=0 en bas) et ajouter l'offset de l'UI
     let bevy_y = window_height - ui_top - y_from_top - h;
-
     (x as u32, bevy_y as u32, w as u32, h as u32)
 }
 
@@ -225,7 +254,13 @@ fn update_camera_viewport(
     camera.order = order as isize;
     camera.clear_color = ClearColorConfig::Custom(Color::srgb(0.02, 0.02, 0.02));
 
-    *transform = Transform::from_xyz(distance, distance, distance)
+    let camera_pos = Vec3::new(
+        distance * 0.7,
+        distance * 0.8,
+        distance * 0.7
+    );
+
+    *transform = Transform::from_translation(camera_pos)
         .looking_at(Vec3::ZERO, Vec3::Y);
 
     *render_layers = RenderLayers::from_layers(&[0, sim_id + 1]);
@@ -240,6 +275,12 @@ fn spawn_viewport_camera(
     sim_id: usize,
     distance: f32,
 ) {
+    let camera_pos = Vec3::new(
+        distance * 0.7,
+        distance * 0.8,
+        distance * 0.7
+    );
+
     commands.spawn((
         Camera {
             is_active: true,
@@ -253,7 +294,7 @@ fn spawn_viewport_camera(
             ..default()
         },
         Camera3d::default(),
-        Transform::from_xyz(distance, distance, distance)
+        Transform::from_translation(camera_pos)
             .looking_at(Vec3::ZERO, Vec3::Y),
         ViewportCamera { simulation_id: sim_id },
         RenderLayers::from_layers(&[0, sim_id + 1]),
@@ -279,90 +320,4 @@ pub fn assign_render_layers(
             }
         }
     }
-}
-
-/// Dessine les bordures entre les viewports
-pub fn draw_viewport_borders(
-    mut gizmos: Gizmos,
-    ui_state: Res<ForceMatrixUI>,
-    ui_space: Res<UISpace>,
-    windows: Query<&Window>,
-) {
-    let Ok(window) = windows.single() else {
-        return;
-    };
-
-    let selected_count = ui_state.selected_simulations.len();
-    if selected_count <= 1 {
-        return;
-    }
-
-    let available_width = window.width() - ui_space.right_panel_width;
-    if available_width <= 0.0 {
-        return;
-    }
-
-    let color = Color::srgba(1.0, 1.0, 1.0, 0.2);
-
-    match selected_count {
-        2 => {
-            let x = available_width / 2.0;
-            gizmos.line_2d(
-                Vec2::new(x, ui_space.top_panel_height),
-                Vec2::new(x, window.height()),
-                color
-            );
-        },
-        3 => {
-            let width = available_width / 3.0;
-            for i in 1..3 {
-                let x = i as f32 * width;
-                gizmos.line_2d(
-                    Vec2::new(x, ui_space.top_panel_height),
-                    Vec2::new(x, window.height()),
-                    color
-                );
-            }
-        },
-        4 => {
-            let half_width = available_width / 2.0;
-            let half_height = (window.height() - ui_space.top_panel_height) / 2.0;
-
-            gizmos.line_2d(
-                Vec2::new(half_width, ui_space.top_panel_height),
-                Vec2::new(half_width, window.height()),
-                color
-            );
-
-            gizmos.line_2d(
-                Vec2::new(0.0, ui_space.top_panel_height + half_height),
-                Vec2::new(available_width, ui_space.top_panel_height + half_height),
-                color
-            );
-        },
-        _ => {
-            let cols = (selected_count as f32).sqrt().ceil() as usize;
-            let rows = (selected_count as f32 / cols as f32).ceil() as usize;
-            let width = available_width / cols as f32;
-            let height = (window.height() - ui_space.top_panel_height) / rows as f32;
-
-            for i in 1..cols {
-                let x = i as f32 * width;
-                gizmos.line_2d(
-                    Vec2::new(x, ui_space.top_panel_height),
-                    Vec2::new(x, window.height()),
-                    color
-                );
-            }
-
-            for i in 1..rows {
-                let y = ui_space.top_panel_height + i as f32 * height;
-                gizmos.line_2d(
-                    Vec2::new(0.0, y),
-                    Vec2::new(available_width, y),
-                    color
-                );
-            }
-        }
-    }
-}
+}   

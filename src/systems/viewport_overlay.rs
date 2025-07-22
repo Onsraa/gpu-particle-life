@@ -79,7 +79,7 @@ pub fn draw_viewport_overlays(
 
                     ui.vertical_centered(|ui| {
                         ui.label(
-                            egui::RichText::new(format!("Simulation #{}", sim_id + 1))
+                            egui::RichText::new(format!("#{}", sim_id + 1))
                                 .color(text_color)
                                 .size(14.0)
                                 .strong()

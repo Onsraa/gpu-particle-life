@@ -1,6 +1,6 @@
 use crate::states::app::AppState;
 use crate::systems::viewport_manager::{
-    UISpace, assign_render_layers, delayed_viewport_update, draw_viewport_borders,
+    UISpace, assign_render_layers, delayed_viewport_update,
     force_viewport_update_after_startup, update_viewports,
 };
 use crate::systems::viewport_overlay::draw_viewport_overlays;
@@ -8,7 +8,7 @@ use crate::ui::force_matrix::{ForceMatrixUI, force_matrix_window, speed_control_
 use crate::ui::main_menu::{MenuConfig, main_menu_ui};
 use crate::ui::save_population::{
     SavePopulationUI, enhanced_simulations_list_ui, save_population_ui,
-}; 
+};
 use crate::ui::visualizer::{VisualizerSelection, visualizer_ui};
 use bevy::prelude::*;
 use bevy_egui::{EguiContextPass, EguiPlugin};
@@ -25,8 +25,8 @@ impl Plugin for UIPlugin {
         app.init_resource::<ForceMatrixUI>();
         app.init_resource::<UISpace>();
         app.init_resource::<MenuConfig>();
-        app.init_resource::<SavePopulationUI>(); // NOUVEAU
-        app.init_resource::<VisualizerSelection>(); // NOUVEAU
+        app.init_resource::<SavePopulationUI>();
+        app.init_resource::<VisualizerSelection>();
 
         // Système pour forcer la mise à jour des viewports après le démarrage
         app.add_systems(Startup, force_viewport_update_after_startup);
@@ -55,7 +55,7 @@ impl Plugin for UIPlugin {
             main_menu_ui.run_if(in_state(AppState::MainMenu)),
         );
 
-        // NOUVEAU : Systèmes UI du visualiseur
+        // Systèmes UI du visualiseur
         app.add_systems(
             EguiContextPass,
             visualizer_ui.run_if(in_state(AppState::Visualizer)),
@@ -72,14 +72,12 @@ impl Plugin for UIPlugin {
                     enhanced_simulations_list_ui,
                     force_matrix_window,
                     save_population_ui,
-                ), // MODIFIÉ
+                ),
                 // Mise à jour des viewports
                 update_viewports
-                    .after(enhanced_simulations_list_ui) // MODIFIÉ
+                    .after(enhanced_simulations_list_ui)
                     .after(force_matrix_window),
-                // Dessin des bordures
-                draw_viewport_borders.after(update_viewports),
-                // Overlays des numéros de simulation
+                // Overlays des numéros de simulation (gardé)
                 draw_viewport_overlays.after(update_viewports),
             )
                 .run_if(in_state(AppState::Simulation)),

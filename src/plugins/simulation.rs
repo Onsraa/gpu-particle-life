@@ -6,8 +6,8 @@ use crate::systems::debug_particles::debug_particle_movement;
 use crate::systems::{
     collision::detect_food_collision,
     debug::debug_scores,
-    movement::physics_simulation_system, // NOUVEAU : système physique unifié
-    spatial_grid::{SpatialGrid, update_spatial_grid},
+    movement::physics_simulation_system,
+    spatial_grid::{SpatialGrid, update_spatial_grid}, 
     spawning::{spawn_food, spawn_simulations_with_particles, EntitiesSpawned},
     reset::reset_for_new_epoch,
     population_save::{PopulationSaveEvents, AvailablePopulations, process_save_requests, load_available_populations},
@@ -45,6 +45,7 @@ impl Plugin for SimulationPlugin {
                     spawn_simulations_with_particles,
                     spawn_food,
                     reset_for_new_epoch,
+                    setup_spatial_system_params, 
                 ).chain(),
             )
 
@@ -55,7 +56,7 @@ impl Plugin for SimulationPlugin {
                     .run_if(in_state(AppState::Simulation)),
             )
 
-            // NOUVEAU : Système physique unifié pour CPU
+            // NOUVEAU : Système physique avec support torus pour CPU
             .add_systems(
                 Update,
                 physics_simulation_system
@@ -64,10 +65,14 @@ impl Plugin for SimulationPlugin {
                     .run_if(compute_disabled),
             )
 
-            // Système GPU (inchangé)
+            // MODIFICATION : Système GPU avec fallback spatial pour compatibilité
             .add_systems(
                 Update,
-                apply_compute_results
+                (
+                    update_spatial_grid.before(apply_compute_results), // NOUVEAU : Mise à jour avant GPU
+                    apply_compute_results,
+                )
+                    .chain()
                     .run_if(in_state(SimulationState::Running))
                     .run_if(in_state(AppState::Simulation))
                     .run_if(compute_enabled),
@@ -98,6 +103,26 @@ impl Plugin for SimulationPlugin {
     }
 }
 
+/// NOUVEAU : Initialise les paramètres du système spatial
+fn setup_spatial_system_params(
+    mut torus_cache: ResMut<crate::systems::torus_spatial::TorusNeighborCache>,
+    grid_params: Res<crate::resources::grid::GridParameters>,
+    sim_params: Res<crate::resources::simulation::SimulationParameters>,
+) {
+    // Configurer le cache torus avec les paramètres de grille
+    torus_cache.update_grid_bounds(
+        grid_params.width,
+        grid_params.height,
+        grid_params.depth,
+    );
+
+    // Définir la distance de recherche maximale
+    torus_cache.max_search_distance = sim_params.max_force_range;
+
+    info!("🌐 Système spatial torus initialisé avec portée {:.0}",
+          sim_params.max_force_range);
+}
+
 /// Condition pour vérifier si le compute est activé
 fn compute_enabled(compute: Res<ComputeEnabled>) -> bool {
     compute.0
@@ -113,7 +138,7 @@ fn transition_to_running(
     mut next_state: ResMut<NextState<SimulationState>>,
     compute_enabled: Res<ComputeEnabled>,
 ) {
-    info!("Transitioning to Running state, GPU compute: {}", compute_enabled.0);
+    info!("Transitioning to Running state, GPU compute: {}, Torus spatial: Activé", compute_enabled.0);
     next_state.set(SimulationState::Running);
 }
 
@@ -127,9 +152,6 @@ fn check_epoch_end(
 
     if sim_params.is_epoch_finished() {
         info!("Époque {} terminée!", sim_params.current_epoch);
-
-        // TODO: Passer à l'état de sélection génétique
-        // Pour l'instant, on passe directement à la nouvelle époque
         sim_params.start_new_epoch();
         next_state.set(SimulationState::Starting);
     }
@@ -163,6 +185,7 @@ fn cleanup_all(
     food: Query<Entity, With<crate::components::food::Food>>,
     cameras: Query<Entity, With<crate::systems::viewport_manager::ViewportCamera>>,
     mut entities_spawned: ResMut<EntitiesSpawned>,
+    mut torus_cache: ResMut<crate::systems::torus_spatial::TorusNeighborCache>, // NOUVEAU
 ) {
     // Supprimer toutes les simulations et leurs particules
     for entity in simulations.iter() {
@@ -179,8 +202,11 @@ fn cleanup_all(
         commands.entity(entity).despawn();
     }
 
+    // NOUVEAU : Nettoyer le cache spatial
+    torus_cache.neighbors.clear();
+
     // Réinitialiser le flag
     entities_spawned.0 = false;
 
-    info!("Nettoyage complet de la simulation");
+    info!("Nettoyage complet de la simulation (y compris cache spatial)");
 }
