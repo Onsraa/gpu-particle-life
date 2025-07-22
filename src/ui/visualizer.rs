@@ -193,7 +193,7 @@ pub fn visualizer_ui(
 
                         // Bouton détails
                         if ui.add_sized([120.0, 40.0],
-                                        egui::Button::new(egui::RichText::new("ℹ️ Détails").size(14.0)))
+                                        egui::Button::new(egui::RichText::new("ℹ Détails").size(14.0)))
                             .on_hover_text("Voir les détails de cette population")
                             .clicked() {
                             visualizer.selected_population = Some(population.clone());

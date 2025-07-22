@@ -89,7 +89,7 @@ pub fn main_menu_ui(
         // Titre avec style amélioré
         ui.vertical_centered(|ui| {
             ui.add_space(20.0);
-            ui.label(egui::RichText::new("🧬 Simulation de Vie Artificielle")
+            ui.label(egui::RichText::new("Simulation de Vie Artificielle")
                 .size(28.0)
                 .strong()
                 .color(egui::Color32::from_rgb(100, 200, 255)));
@@ -106,7 +106,7 @@ pub fn main_menu_ui(
         egui::ScrollArea::vertical().show(ui, |ui| {
             // === Paramètres de grille ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("🌍 Paramètres de Grille").size(16.0).strong());
+                ui.label(egui::RichText::new("Paramètres de Grille").size(16.0).strong());
                 ui.separator();
 
                 egui::Grid::new("grid_params")
@@ -143,7 +143,7 @@ pub fn main_menu_ui(
 
             // === Paramètres de simulation ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("⚙️ Paramètres de Simulation").size(16.0).strong());
+                ui.label(egui::RichText::new("⚙ Paramètres de Simulation").size(16.0).strong());
                 ui.separator();
 
                 egui::Grid::new("sim_params")
@@ -204,7 +204,7 @@ pub fn main_menu_ui(
                 ui.add_space(5.0);
 
                 // Informations de diversité détaillées
-                ui.collapsing("ℹ️ Diversité génétique", |ui| {
+                ui.collapsing("ℹ Diversité génétique", |ui| {
                     let interactions = menu_config.particle_types * menu_config.particle_types;
                     let bits_per_interaction = (64 / interactions.max(1)).max(2).min(8);
                     let diversity_levels = 1 << bits_per_interaction;
@@ -216,11 +216,11 @@ pub fn main_menu_ui(
                     ui.label(format!("• Résolution: {:.4} par step", resolution));
 
                     match menu_config.particle_types {
-                        2 => ui.label("🟢 Excellent: très fine granularité"),
-                        3 => ui.label("🟢 Recommandé: bon équilibre diversité/granularité"),
-                        4 => ui.label("🟡 Acceptable: granularité moyenne"),
-                        5 => ui.label("🟠 Limité: seulement 4 niveaux par interaction"),
-                        _ => ui.label("🔴 Non recommandé"),
+                        2 => ui.label("Excellent: très fine granularité"),
+                        3 => ui.label("Recommandé: bon équilibre diversité/granularité"),
+                        4 => ui.label("Acceptable: granularité moyenne"),
+                        5 => ui.label("Limité: seulement 4 niveaux par interaction"),
+                        _ => ui.label("Non recommandé"),
                     };
                 });
             });
@@ -229,7 +229,7 @@ pub fn main_menu_ui(
 
             // === Paramètres génétiques ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("🧬 Paramètres Génétiques").size(16.0).strong());
+                ui.label(egui::RichText::new("Paramètres Génétiques").size(16.0).strong());
                 ui.separator();
 
                 egui::Grid::new("genetic_params")
@@ -262,7 +262,7 @@ pub fn main_menu_ui(
                     });
 
                 ui.add_space(5.0);
-                ui.label(egui::RichText::new("ℹ️ Algorithme génétique amélioré avec mutation adaptative")
+                ui.label(egui::RichText::new("ℹ Algorithme génétique amélioré avec mutation adaptative")
                     .small()
                     .color(egui::Color32::GRAY));
             });
@@ -271,7 +271,7 @@ pub fn main_menu_ui(
 
             // === Paramètres de nourriture ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("🍎 Paramètres de Nourriture").size(16.0).strong());
+                ui.label(egui::RichText::new("Paramètres de Nourriture").size(16.0).strong());
                 ui.separator();
 
                 egui::Grid::new("food_params")
@@ -313,7 +313,7 @@ pub fn main_menu_ui(
 
             // === Mode de bords ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("🔲 Mode de Bords").size(16.0).strong());
+                ui.label(egui::RichText::new("Mode de Bords").size(16.0).strong());
                 ui.separator();
 
                 ui.horizontal(|ui| {
@@ -336,7 +336,7 @@ pub fn main_menu_ui(
 
             // === Paramètres de performance ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("⚡ Performance").size(16.0).strong());
+                ui.label(egui::RichText::new("Performance").size(16.0).strong());
                 ui.separator();
 
                 ui.horizontal(|ui| {
@@ -351,10 +351,10 @@ pub fn main_menu_ui(
 
                 ui.add_space(5.0);
                 if menu_config.use_gpu {
-                    ui.label("🚀 Les calculs d'interactions seront effectués sur le GPU");
+                    ui.label("Les calculs d'interactions seront effectués sur le GPU");
                     ui.label("Recommandé pour plus de 500 particules");
                 } else {
-                    ui.label("💻 Les calculs seront effectués sur le CPU");
+                    ui.label("Les calculs seront effectués sur le CPU");
                     ui.label("Plus flexible mais plus lent avec beaucoup de particules");
                 }
             });
@@ -366,7 +366,7 @@ pub fn main_menu_ui(
                 ui.horizontal(|ui| {
                     // Bouton principal : Lancer Simulation
                     if ui.add_sized([200.0, 50.0],
-                                    egui::Button::new(egui::RichText::new("🚀 Lancer la Simulation").size(18.0))
+                                    egui::Button::new(egui::RichText::new("Lancer la Simulation").size(18.0))
                                         .fill(egui::Color32::from_rgb(0, 120, 215)))
                         .on_hover_text("Démarre une nouvelle simulation avec algorithme génétique")
                         .clicked() {
@@ -379,7 +379,7 @@ pub fn main_menu_ui(
 
                     // Bouton Visualiseur
                     if ui.add_sized([180.0, 50.0],
-                                    egui::Button::new(egui::RichText::new("🔍 Visualiseur").size(16.0))
+                                    egui::Button::new(egui::RichText::new("Visualiseur").size(16.0))
                                         .fill(egui::Color32::from_rgb(40, 160, 90)))
                         .on_hover_text("Visualise les populations sauvegardées")
                         .clicked() {
@@ -403,7 +403,7 @@ pub fn main_menu_ui(
                 ui.add_space(10.0);
 
                 // Bouton secondaire : Réinitialiser
-                if ui.button(egui::RichText::new("⚙️ Réinitialiser").size(14.0))
+                if ui.button(egui::RichText::new("⚙ Réinitialiser").size(14.0))
                     .on_hover_text("Remet tous les paramètres aux valeurs par défaut")
                     .clicked() {
                     *menu_config = MenuConfig::default();
