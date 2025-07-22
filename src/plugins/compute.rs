@@ -1,33 +1,32 @@
+use bevy::render::Extract;
 use bevy::{
     prelude::*,
     render::{
+        MainWorld, Render, RenderApp, RenderSet,
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_graph::{self, RenderGraph, RenderLabel},
         render_resource::{binding_types::*, *},
         renderer::{RenderContext, RenderDevice, RenderQueue},
-        Render, RenderApp, RenderSet,
-        MainWorld,
     },
 };
-use std::borrow::Cow;
-use bevy::render::Extract;
 use bytemuck::{Pod, Zeroable};
+use std::borrow::Cow;
 
 use crate::{
     components::{
+        food::Food,
+        genotype::Genotype,
         particle::{Particle, ParticleType, Velocity},
         simulation::{Simulation, SimulationId},
-        genotype::Genotype,
-        food::Food,
     },
+    globals::{PARTICLE_RADIUS, PHYSICS_TIMESTEP}, // AJOUT : import de PHYSICS_TIMESTEP
     resources::{
-        simulation::{SimulationParameters, SimulationSpeed},
-        grid::GridParameters,
         boundary::BoundaryMode,
+        grid::GridParameters,
+        simulation::{SimulationParameters, SimulationSpeed},
     },
     states::app::AppState,
     states::simulation::SimulationState,
-    globals::{PARTICLE_RADIUS, PHYSICS_TIMESTEP}, // AJOUT : import de PHYSICS_TIMESTEP
 };
 
 /// Chemin vers le shader
@@ -110,10 +109,7 @@ impl Plugin for ParticleComputePlugin {
 
         let mut render_graph = render_app.world_mut().resource_mut::<RenderGraph>();
         render_graph.add_node(ParticleComputeLabel, ParticleComputeNode::default());
-        render_graph.add_node_edge(
-            ParticleComputeLabel,
-            bevy::render::graph::CameraDriverLabel,
-        );
+        render_graph.add_node_edge(ParticleComputeLabel, bevy::render::graph::CameraDriverLabel);
     }
 
     fn finish(&self, app: &mut App) {
@@ -129,8 +125,8 @@ struct ParticleComputeLabel;
 #[derive(Resource, Clone, Default)]
 pub struct ExtractedParticleData {
     pub particles: Vec<(Entity, Vec3, Vec3, usize, usize)>, // (entity, position, velocity, type, sim_id)
-    pub genomes: Vec<(u64, u16)>, // (genome, food_genome) par simulation
-    pub food_positions: Vec<(Vec3, bool)>, // (position, is_active)
+    pub genomes: Vec<(u64, u16)>,                           // (genome, food_genome) par simulation
+    pub food_positions: Vec<(Vec3, bool)>,                  // (position, is_active)
     pub params: GpuSimulationParams,
     pub enabled: bool,
 }
@@ -171,7 +167,9 @@ fn extract_particle_data(
     boundary_mode: Extract<Res<BoundaryMode>>,
     time: Extract<Res<Time>>,
     // Queries pour extraire les données
-    particles_query: Extract<Query<(Entity, &Transform, &Velocity, &ParticleType, &ChildOf), With<Particle>>>,
+    particles_query: Extract<
+        Query<(Entity, &Transform, &Velocity, &ParticleType, &ChildOf), With<Particle>>,
+    >,
     simulations_query: Extract<Query<(&SimulationId, &Genotype), With<Simulation>>>,
     food_query: Extract<Query<(&Transform, &ViewVisibility), With<Food>>>,
 ) {
@@ -243,10 +241,9 @@ fn extract_particle_data(
 
     // Extraire la nourriture visible
     for (transform, visibility) in food_query.iter() {
-        extracted_data.food_positions.push((
-            transform.translation,
-            visibility.get(),
-        ));
+        extracted_data
+            .food_positions
+            .push((transform.translation, visibility.get()));
     }
 }
 
@@ -284,8 +281,8 @@ fn prepare_particle_buffers(
     let food_count = extracted_data.food_positions.len().max(1);
 
     // Vérifier si on doit recréer les buffers
-    let needs_recreation = buffers_state.allocated_particles < particle_count ||
-        buffers_state.allocated_simulations < simulation_count;
+    let needs_recreation = buffers_state.allocated_particles < particle_count
+        || buffers_state.allocated_simulations < simulation_count;
 
     if !needs_recreation && existing_buffers.is_some() {
         return;
@@ -516,18 +513,20 @@ impl render_graph::Node for ParticleComputeNode {
 
         // CHAQUE itération = un pas physique complet avec timestep fixe
         for iteration in 0..iterations {
-            let mut pass = render_context
-                .command_encoder()
-                .begin_compute_pass(&ComputePassDescriptor {
-                    label: Some(&format!("Particle Compute Pass {}", iteration)),
-                    timestamp_writes: None,
-                });
+            let mut pass =
+                render_context
+                    .command_encoder()
+                    .begin_compute_pass(&ComputePassDescriptor {
+                        label: Some(&format!("Particle Compute Pass {}", iteration)),
+                        timestamp_writes: None,
+                    });
 
             pass.set_bind_group(0, &buffers.bind_group, &[]);
             pass.set_pipeline(compute_pipeline);
 
             // Calculer le nombre de workgroups nécessaires
-            let num_workgroups = (buffers.particle_count as u32 + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
+            let num_workgroups =
+                (buffers.particle_count as u32 + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
             pass.dispatch_workgroups(num_workgroups, 1, 1);
 
             drop(pass);
@@ -556,7 +555,9 @@ fn write_compute_results(
     extracted_data: Res<ExtractedParticleData>,
     mut synced_results: ResMut<SyncedComputeResults>,
 ) {
-    let Some(buffers) = buffers else { return; };
+    let Some(buffers) = buffers else {
+        return;
+    };
 
     if buffers.particle_count == 0 {
         return;
@@ -564,14 +565,17 @@ fn write_compute_results(
 
     // Allouer le buffer de résultats si nécessaire
     if results_buffer.data.len() != buffers.particle_count {
-        results_buffer.data.resize(buffers.particle_count, GpuParticle {
-            position: [0.0; 3],
-            _padding1: 0.0,
-            velocity: [0.0; 3],
-            particle_type: 0,
-            simulation_id: 0,
-            _padding2: [0.0; 3],
-        });
+        results_buffer.data.resize(
+            buffers.particle_count,
+            GpuParticle {
+                position: [0.0; 3],
+                _padding1: 0.0,
+                velocity: [0.0; 3],
+                particle_type: 0,
+                simulation_id: 0,
+                _padding2: [0.0; 3],
+            },
+        );
     }
 
     // Créer un buffer de staging pour la lecture
@@ -621,9 +625,32 @@ fn write_compute_results(
         }
     }
 }
+// Dans src/plugins/compute.rs - Ajouter ces SystemSets
 
-/// Système pour appliquer les résultats du compute shader aux entités (inchangé)
-pub fn apply_compute_results(
+use bevy::ecs::schedule::SystemSet;
+
+/// SystemSets pour organiser les systèmes de compute
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ComputeSystemSet {
+    /// Préparation des données pour le GPU
+    PrepareData,
+    /// Exécution des calculs GPU
+    Execute,
+    /// Application des résultats
+    ApplyResults,
+}
+
+/// Fonction publique pour appliquer les résultats (pour éviter les doublons)
+pub fn apply_compute_results_system(
+    mut particles: Query<(&mut Transform, &mut Velocity), With<Particle>>,
+    results: Res<SyncedComputeResults>,
+    compute_enabled: Res<ComputeEnabled>,
+) {
+    apply_compute_results(particles, results, compute_enabled);
+}
+
+// Garder la fonction originale privée
+fn apply_compute_results(
     mut particles: Query<(&mut Transform, &mut Velocity), With<Particle>>,
     results: Res<SyncedComputeResults>,
     compute_enabled: Res<ComputeEnabled>,

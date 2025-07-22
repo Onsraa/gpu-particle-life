@@ -1,18 +1,22 @@
 use bevy::prelude::*;
 
-use crate::states::simulation::SimulationState;
 use crate::states::app::AppState;
+use crate::states::simulation::SimulationState;
 use crate::systems::debug_particles::debug_particle_movement;
 use crate::systems::{
     collision::detect_food_collision,
     debug::debug_scores,
     movement::physics_simulation_system,
-    spatial_grid::{SpatialGrid, update_spatial_grid}, 
-    spawning::{spawn_food, spawn_simulations_with_particles, EntitiesSpawned},
+    population_save::{
+        AvailablePopulations, PopulationSaveEvents, load_available_populations,
+        process_save_requests,
+    },
     reset::reset_for_new_epoch,
-    population_save::{PopulationSaveEvents, AvailablePopulations, process_save_requests, load_available_populations},
+    spatial_grid::{SpatialGrid, update_spatial_grid},
+    spawning::{EntitiesSpawned, spawn_food, spawn_simulations_with_particles},
 };
-use crate::plugins::compute::{ComputeEnabled, apply_compute_results};
+// CHANGEMENT : Import du système et sets depuis compute
+use crate::plugins::compute::{ComputeEnabled, ComputeSystemSet, apply_compute_results_system};
 
 pub struct SimulationPlugin;
 
@@ -26,10 +30,8 @@ impl Plugin for SimulationPlugin {
             .init_resource::<EntitiesSpawned>()
             .init_resource::<PopulationSaveEvents>()
             .init_resource::<AvailablePopulations>()
-
             // Charger les populations au démarrage
             .add_systems(Startup, load_available_populations)
-
             // Transition vers l'état de simulation
             .add_systems(
                 OnEnter(AppState::Simulation),
@@ -37,7 +39,6 @@ impl Plugin for SimulationPlugin {
                     next_state.set(SimulationState::Starting);
                 },
             )
-
             // Systèmes de démarrage
             .add_systems(
                 OnEnter(SimulationState::Starting),
@@ -45,39 +46,38 @@ impl Plugin for SimulationPlugin {
                     spawn_simulations_with_particles,
                     spawn_food,
                     reset_for_new_epoch,
-                    setup_spatial_system_params, 
-                ).chain(),
+                    setup_spatial_system_params,
+                )
+                    .chain(),
             )
-
             .add_systems(
                 Update,
                 transition_to_running
                     .run_if(in_state(SimulationState::Starting))
                     .run_if(in_state(AppState::Simulation)),
             )
-
-            // NOUVEAU : Système physique avec support torus pour CPU
+            // Système physique CPU uniquement
             .add_systems(
                 Update,
                 physics_simulation_system
+                    .in_set(ComputeSystemSet::Execute) // Utiliser le même set
                     .run_if(in_state(SimulationState::Running))
                     .run_if(in_state(AppState::Simulation))
                     .run_if(compute_disabled),
             )
-
-            // MODIFICATION : Système GPU avec fallback spatial pour compatibilité
+            // MODIFICATION : Système GPU avec set spécifique
             .add_systems(
                 Update,
                 (
-                    update_spatial_grid.before(apply_compute_results), // NOUVEAU : Mise à jour avant GPU
-                    apply_compute_results,
+                    update_spatial_grid.in_set(ComputeSystemSet::PrepareData),
+                    apply_compute_results_system
+                        .in_set(ComputeSystemSet::ApplyResults)
+                        .after(ComputeSystemSet::Execute),
                 )
-                    .chain()
                     .run_if(in_state(SimulationState::Running))
                     .run_if(in_state(AppState::Simulation))
                     .run_if(compute_enabled),
             )
-
             // Systèmes généraux (inchangés)
             .add_systems(
                 Update,
@@ -88,39 +88,33 @@ impl Plugin for SimulationPlugin {
                     debug_particle_movement,
                     process_save_requests,
                 )
-                    .chain()
+                    .after(ComputeSystemSet::ApplyResults) // Après les calculs
                     .run_if(in_state(SimulationState::Running))
                     .run_if(in_state(AppState::Simulation)),
             )
-
             .add_systems(
                 Update,
-                handle_pause_input
-                    .run_if(in_state(AppState::Simulation))
+                handle_pause_input.run_if(in_state(AppState::Simulation)),
             )
-
             .add_systems(OnExit(AppState::Simulation), cleanup_all);
     }
 }
 
-/// NOUVEAU : Initialise les paramètres du système spatial
 fn setup_spatial_system_params(
     mut torus_cache: ResMut<crate::systems::torus_spatial::TorusNeighborCache>,
     grid_params: Res<crate::resources::grid::GridParameters>,
     sim_params: Res<crate::resources::simulation::SimulationParameters>,
 ) {
     // Configurer le cache torus avec les paramètres de grille
-    torus_cache.update_grid_bounds(
-        grid_params.width,
-        grid_params.height,
-        grid_params.depth,
-    );
+    torus_cache.update_grid_bounds(grid_params.width, grid_params.height, grid_params.depth);
 
     // Définir la distance de recherche maximale
     torus_cache.max_search_distance = sim_params.max_force_range;
 
-    info!("🌐 Système spatial torus initialisé avec portée {:.0}",
-          sim_params.max_force_range);
+    info!(
+        "🌐 Système spatial torus initialisé avec portée {:.0}",
+        sim_params.max_force_range
+    );
 }
 
 /// Condition pour vérifier si le compute est activé
@@ -138,7 +132,10 @@ fn transition_to_running(
     mut next_state: ResMut<NextState<SimulationState>>,
     compute_enabled: Res<ComputeEnabled>,
 ) {
-    info!("Transitioning to Running state, GPU compute: {}, Torus spatial: Activé", compute_enabled.0);
+    info!(
+        "Transitioning to Running state, GPU compute: {}, Torus spatial: Activé",
+        compute_enabled.0
+    );
     next_state.set(SimulationState::Running);
 }
 
