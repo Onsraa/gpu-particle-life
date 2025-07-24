@@ -1,81 +1,52 @@
 use bevy::prelude::*;
 use crate::states::app::AppState;
-use crate::systems::spawning_visualizer::spawn_visualizer_simulation;
 use crate::systems::{
     collision::detect_food_collision,
     movement::physics_simulation_system,
-    spatial_grid::SpatialGrid,
     spawning::spawn_food,
-    torus_spatial::TorusSpatialPlugin,
+    spawning_visualizer::spawn_visualizer_simulation,
 };
-use crate::plugins::compute::{ComputeEnabled, ComputeSystemSet, apply_compute_results_system};
+use crate::plugins::compute::ComputeEnabled;
+use crate::components::{
+    genotype::Genotype,
+    particle::{Particle, ParticleType, Velocity},
+    simulation::{Simulation, SimulationId},
+    food::Food,
+};
+use crate::resources::boundary::BoundaryMode;
+use crate::resources::{grid::GridParameters, simulation::SimulationParameters};
 
 pub struct VisualizerPlugin;
 
 impl Plugin for VisualizerPlugin {
     fn build(&self, app: &mut App) {
         app
-            // Systèmes d'entrée dans le mode visualisation
             .add_systems(
                 OnEnter(AppState::Visualization),
                 (
                     spawn_visualizer_simulation,
                     spawn_food,
-                    setup_visualizer_spatial_params,
                 ).chain(),
             )
-
-            // Système CPU
+            // Système CPU uniquement
             .add_systems(
                 Update,
                 (
-                    physics_simulation_system
-                        .in_set(ComputeSystemSet::Execute),
-                    detect_food_collision
-                        .after(ComputeSystemSet::Execute),
+                    visualizer_physics_system,
+                    detect_food_collision.after(visualizer_physics_system),
                 )
                     .run_if(in_state(AppState::Visualization))
                     .run_if(compute_disabled),
             )
-
-            // MODIFICATION : Système GPU avec set spécifique pour éviter les conflits
+            // Système GPU (si activé)
             .add_systems(
                 Update,
-                (
-                    apply_compute_results_system
-                        .in_set(ComputeSystemSet::ApplyResults)
-                        .after(ComputeSystemSet::Execute),
-                    detect_food_collision
-                        .after(ComputeSystemSet::ApplyResults),
-                )
+                detect_food_collision
                     .run_if(in_state(AppState::Visualization))
                     .run_if(compute_enabled),
             )
-
-            // Nettoyage en sortant
             .add_systems(OnExit(AppState::Visualization), cleanup_visualization);
     }
-}
-
-// Reste du code inchangé...
-
-fn setup_visualizer_spatial_params(
-    mut torus_cache: ResMut<crate::systems::torus_spatial::TorusNeighborCache>,
-    grid_params: Res<crate::resources::grid::GridParameters>,
-    sim_params: Res<crate::resources::simulation::SimulationParameters>,
-) {
-    // Configurer le cache torus avec les paramètres de grille
-    torus_cache.update_grid_bounds(
-        grid_params.width,
-        grid_params.height,
-        grid_params.depth,
-    );
-
-    // Définir la distance de recherche maximale
-    torus_cache.max_search_distance = sim_params.max_force_range;
-
-    info!("🌐 Système spatial torus initialisé pour le visualizer avec portée {:.0}",
-          sim_params.max_force_range);
 }
 
 fn compute_enabled(compute: Res<ComputeEnabled>) -> bool {
@@ -86,11 +57,32 @@ fn compute_disabled(compute: Res<ComputeEnabled>) -> bool {
     !compute.0
 }
 
+/// Wrapper pour le système physique du visualizer (évite les conflits de noms)
+fn visualizer_physics_system(
+    sim_params: Res<SimulationParameters>,
+    grid: Res<GridParameters>,
+    boundary_mode: Res<BoundaryMode>,
+    simulations: Query<(&SimulationId, &Genotype), With<Simulation>>,
+    mut particles: Query<
+        (Entity, &mut Transform, &mut Velocity, &ParticleType, &ChildOf),
+        With<Particle>,
+    >,
+    food_query: Query<(&Transform, &ViewVisibility), (With<Food>, Without<Particle>)>,
+) {
+    physics_simulation_system(
+        sim_params,
+        grid,
+        boundary_mode,
+        simulations,
+        particles,
+        food_query,
+    );
+}
+
 fn cleanup_visualization(
     mut commands: Commands,
     simulations: Query<Entity, With<crate::components::simulation::Simulation>>,
     food: Query<Entity, With<crate::components::food::Food>>,
-    mut torus_cache: ResMut<crate::systems::torus_spatial::TorusNeighborCache>,
 ) {
     for entity in simulations.iter() {
         commands.entity(entity).despawn();
@@ -99,8 +91,5 @@ fn cleanup_visualization(
         commands.entity(entity).despawn();
     }
 
-    // Nettoyer le cache spatial
-    torus_cache.neighbors.clear();
-
-    info!("Nettoyage de la visualisation terminé (y compris cache spatial)");
+    info!("Nettoyage de la visualisation terminé");
 }

@@ -4,7 +4,6 @@ use bevy_egui::{egui, EguiContexts};
 use crate::systems::population_save::{AvailablePopulations, SavedPopulation};
 use crate::states::app::AppState;
 
-/// Ressource pour stocker la population sélectionnée pour le visualizer
 #[derive(Resource, Default)]
 pub struct VisualizerSelection {
     pub selected_population: Option<SavedPopulation>,
@@ -25,15 +24,28 @@ pub enum PopulationSortBy {
 #[derive(Resource)]
 pub struct VisualizerGenome(pub crate::components::genotype::Genotype);
 
-/// Interface du mode Visualizer pour sélectionner une population - VERSION CORRIGÉE
 pub fn visualizer_ui(
     mut contexts: EguiContexts,
     mut visualizer: ResMut<VisualizerSelection>,
-    available: Res<AvailablePopulations>,
+    mut available: ResMut<AvailablePopulations>, // Changé en mut
     mut next_state: ResMut<NextState<AppState>>,
     mut commands: Commands,
 ) {
     let ctx = contexts.ctx_mut();
+
+    // Charger les populations si pas encore fait
+    if !available.loaded {
+        match crate::systems::population_save::load_all_populations() {
+            Ok(populations) => {
+                available.populations = populations;
+                available.loaded = true;
+                info!("Populations chargées dans le visualizer: {}", available.populations.len());
+            }
+            Err(e) => {
+                error!("Erreur lors du chargement des populations: {}", e);
+            }
+        }
+    }
 
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.vertical_centered(|ui| {
@@ -42,13 +54,11 @@ pub fn visualizer_ui(
         });
 
         ui.horizontal(|ui| {
-            // Barre de recherche
             ui.label("Recherche:");
             ui.text_edit_singleline(&mut visualizer.search_filter);
 
             ui.separator();
 
-            // Options de tri
             ui.label("Trier par:");
             egui::ComboBox::from_label("")
                 .selected_text(match visualizer.sort_by {
@@ -66,7 +76,22 @@ pub fn visualizer_ui(
 
             ui.separator();
 
-            // Bouton retour au menu
+            // Bouton pour recharger les populations
+            if ui.button("🔄 Recharger").on_hover_text("Recharge les populations du dossier").clicked() {
+                match crate::systems::population_save::load_all_populations() {
+                    Ok(populations) => {
+                        available.populations = populations;
+                        available.loaded = true;
+                        info!("Populations rechargées: {}", available.populations.len());
+                    }
+                    Err(e) => {
+                        error!("Erreur lors du rechargement: {}", e);
+                    }
+                }
+            }
+
+            ui.separator();
+
             if ui.button("↶ Retour au Menu").clicked() {
                 next_state.set(AppState::MainMenu);
             }
@@ -96,7 +121,6 @@ pub fn visualizer_ui(
             })
             .collect();
 
-        // Trier selon le critère sélectionné
         match visualizer.sort_by {
             PopulationSortBy::Date => {
                 filtered_populations.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
@@ -114,12 +138,9 @@ pub fn visualizer_ui(
 
         ui.label(format!("Populations trouvées: {} / {}", filtered_populations.len(), available.populations.len()));
 
-        // Liste des populations avec détails
         egui::ScrollArea::vertical().show(ui, |ui| {
             for population in filtered_populations {
                 ui.group(|ui| {
-
-                    // En-tête avec nom et date
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new(&population.name)
                             .size(16.0)
@@ -132,7 +153,6 @@ pub fn visualizer_ui(
                         });
                     });
 
-                    // Description si présente
                     if let Some(desc) = &population.description {
                         ui.label(egui::RichText::new(desc)
                             .italics()
@@ -141,7 +161,6 @@ pub fn visualizer_ui(
 
                     ui.separator();
 
-                    // Informations techniques en grille
                     egui::Grid::new(format!("pop_info_{}", population.timestamp))
                         .num_columns(4)
                         .spacing([20.0, 5.0])
@@ -173,9 +192,7 @@ pub fn visualizer_ui(
 
                     ui.add_space(10.0);
 
-                    // BOUTONS D'ACTION - BIEN VISIBLES
                     ui.horizontal(|ui| {
-                        // Bouton principal de visualisation - GRAND ET COLORÉ
                         if ui.add_sized([200.0, 40.0],
                                         egui::Button::new(egui::RichText::new("🔍 VISUALISER").size(16.0))
                                             .fill(egui::Color32::from_rgb(0, 150, 60)))
@@ -183,15 +200,12 @@ pub fn visualizer_ui(
                             .clicked() {
 
                             info!("Lancement de la visualisation: {}", population.name);
-
-                            // Charger cette population et démarrer le visualizer
                             load_population_for_visualization(&mut commands, population.clone());
                             next_state.set(AppState::Visualization);
                         }
 
                         ui.add_space(10.0);
 
-                        // Bouton détails
                         if ui.add_sized([120.0, 40.0],
                                         egui::Button::new(egui::RichText::new("ℹ Détails").size(14.0)))
                             .on_hover_text("Voir les détails de cette population")
@@ -205,14 +219,12 @@ pub fn visualizer_ui(
             }
         });
 
-        // Fenêtre de détails si une population est sélectionnée
         if let Some(ref selected) = visualizer.selected_population.clone() {
             show_population_details(ctx, &mut visualizer.selected_population, selected);
         }
     });
 }
 
-/// Fenêtre de détails d'une population
 fn show_population_details(
     ctx: &egui::Context,
     selected_ref: &mut Option<SavedPopulation>,
@@ -226,7 +238,6 @@ fn show_population_details(
         .open(&mut is_open)
         .show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                // Informations générales
                 ui.group(|ui| {
                     ui.label(egui::RichText::new("Informations Générales").size(14.0).strong());
                     ui.separator();
@@ -256,7 +267,6 @@ fn show_population_details(
 
                 ui.add_space(10.0);
 
-                // Paramètres de simulation
                 ui.group(|ui| {
                     ui.label(egui::RichText::new("Paramètres de Simulation").size(14.0).strong());
                     ui.separator();
@@ -285,22 +295,20 @@ fn show_population_details(
 
                 ui.add_space(10.0);
 
-                // Informations sur le génome
                 ui.group(|ui| {
                     ui.label(egui::RichText::new("Génome").size(14.0).strong());
                     ui.separator();
 
-                    ui.label(format!("Génome principal: 0x{:016X}", population.genotype.genome));
-                    ui.label(format!("Génome nourriture: 0x{:04X}", population.genotype.food_force_genome));
+                    ui.label(format!("Forces particule-particule: {} valeurs", population.genotype.force_matrix.len()));
+                    ui.label(format!("Forces nourriture: {} valeurs", population.genotype.food_forces.len()));
+                    ui.label(format!("Types gérés: {}", population.genotype.type_count));
 
                     let interactions = population.genotype.type_count * population.genotype.type_count;
-                    let bits_per_interaction = (64 / interactions.max(1)).max(2).min(8);
-                    ui.label(format!("Interactions possibles: {} ({} bits chacune)", interactions, bits_per_interaction));
+                    ui.label(format!("Interactions possibles: {}", interactions));
                 });
 
                 ui.add_space(10.0);
 
-                // Environnement
                 ui.group(|ui| {
                     ui.label(egui::RichText::new("Environnement").size(14.0).strong());
                     ui.separator();
@@ -346,19 +354,15 @@ fn show_population_details(
     }
 }
 
-/// Charge une population pour la visualisation
 fn load_population_for_visualization(commands: &mut Commands, population: SavedPopulation) {
     let (genotype, sim_params, grid_params, food_params, particle_config, boundary_mode) =
         population.to_bevy_resources();
 
-    // Insérer toutes les ressources nécessaires
     commands.insert_resource(sim_params);
     commands.insert_resource(grid_params);
     commands.insert_resource(food_params);
     commands.insert_resource(particle_config);
     commands.insert_resource(boundary_mode);
-
-    // Ressource spéciale pour le visualizer avec le génome spécifique
     commands.insert_resource(VisualizerGenome(genotype));
 
     info!("Population '{}' chargée pour visualisation", population.name);

@@ -9,7 +9,6 @@ use crate::components::{
 use crate::systems::population_save::{PopulationSaveEvents, PopulationSaveRequest};
 use crate::ui::force_matrix::ForceMatrixUI;
 
-/// Ressource pour gérer l'interface de sauvegarde
 #[derive(Resource, Default)]
 pub struct SavePopulationUI {
     pub show_save_dialog: bool,
@@ -19,7 +18,6 @@ pub struct SavePopulationUI {
     pub save_in_progress: bool,
 }
 
-/// Interface pour sauvegarder une population depuis la simulation
 pub fn save_population_ui(
     mut contexts: EguiContexts,
     mut save_ui: ResMut<SavePopulationUI>,
@@ -28,7 +26,6 @@ pub fn save_population_ui(
 ) {
     let ctx = contexts.ctx_mut();
 
-    // Fenêtre de dialogue de sauvegarde
     if save_ui.show_save_dialog {
         let mut is_open = true;
 
@@ -42,19 +39,18 @@ pub fn save_population_ui(
                     if let Some((_, score, genotype)) = simulations.iter()
                         .find(|(simulation_id, _, _)| simulation_id.0 == sim_id) {
 
-                        // Informations sur la simulation
                         ui.group(|ui| {
                             ui.label(egui::RichText::new(format!("Simulation #{}", sim_id + 1))
                                 .size(16.0)
                                 .strong());
                             ui.label(format!("Score actuel: {:.1}", score.get()));
                             ui.label(format!("Types de particules: {}", genotype.type_count));
-                            ui.label(format!("Génome: {:016X}", genotype.genome));
+                            ui.label(format!("Forces particule-particule: {}", genotype.force_matrix.len()));
+                            ui.label(format!("Forces nourriture: {}", genotype.food_forces.len()));
                         });
 
                         ui.separator();
 
-                        // Champs de saisie
                         ui.label("Nom de la population *");
                         ui.text_edit_singleline(&mut save_ui.save_name);
 
@@ -71,12 +67,10 @@ pub fn save_population_ui(
 
                         ui.add_space(10.0);
 
-                        // Boutons
                         ui.horizontal(|ui| {
                             let can_save = !save_ui.save_name.trim().is_empty() && !save_ui.save_in_progress;
 
                             if ui.add_enabled(can_save, egui::Button::new("💾 Sauvegarder")).clicked() {
-                                // Déclencher la sauvegarde
                                 save_events.save_requests.push(PopulationSaveRequest {
                                     simulation_id: sim_id,
                                     name: save_ui.save_name.trim().to_string(),
@@ -88,8 +82,6 @@ pub fn save_population_ui(
                                 });
 
                                 save_ui.save_in_progress = true;
-
-                                // Fermer la fenêtre après un délai
                                 save_ui.show_save_dialog = false;
                                 save_ui.simulation_to_save = None;
                                 save_ui.save_name.clear();
@@ -122,7 +114,6 @@ pub fn save_population_ui(
     }
 }
 
-/// Extension du système de liste des simulations pour inclure la sauvegarde
 pub fn enhanced_simulations_list_ui(
     mut contexts: EguiContexts,
     mut ui_state: ResMut<ForceMatrixUI>,
@@ -137,7 +128,7 @@ pub fn enhanced_simulations_list_ui(
         return;
     }
 
-    let panel_width = 400.0; // Augmenté pour inclure le bouton de sauvegarde
+    let panel_width = 400.0;
 
     egui::SidePanel::right("simulations_panel")
         .exact_width(panel_width)
@@ -145,7 +136,6 @@ pub fn enhanced_simulations_list_ui(
         .show(ctx, |ui| {
             ui.heading("Simulations");
 
-            // Boutons pour sélectionner/désélectionner toutes
             ui.horizontal(|ui| {
                 if ui.button("Tout sélectionner").clicked() {
                     for (sim_id, _, _) in simulations.iter() {
@@ -159,18 +149,16 @@ pub fn enhanced_simulations_list_ui(
 
             ui.separator();
 
-            // Liste des simulations avec scores
             let mut sim_list: Vec<_> = simulations.iter().collect();
             sim_list.sort_by(|a, b| b.1.get().partial_cmp(&a.1.get()).unwrap());
 
             egui::ScrollArea::vertical().show(ui, |ui| {
                 egui::Grid::new("simulations_grid")
-                    .num_columns(5) // Ajouté une colonne pour le bouton de sauvegarde
+                    .num_columns(5)
                     .spacing([15.0, 5.0])
                     .striped(true)
                     .min_col_width(40.0)
                     .show(ui, |ui| {
-                        // En-têtes
                         ui.label(egui::RichText::new("Vue").strong());
                         ui.label(egui::RichText::new("Simulation").strong());
                         ui.label(egui::RichText::new("Score").strong());
@@ -185,11 +173,9 @@ pub fn enhanced_simulations_list_ui(
                         ui.separator();
                         ui.end_row();
 
-                        // Lignes de données
                         for (sim_id, score, _genotype) in sim_list {
                             let is_selected_for_matrix = ui_state.selected_simulation == Some(sim_id.0);
 
-                            // Checkbox pour la vue
                             ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
                                 let mut is_selected_for_view = ui_state.selected_simulations.contains(&sim_id.0);
                                 if ui.checkbox(&mut is_selected_for_view, "").changed() {
@@ -201,7 +187,6 @@ pub fn enhanced_simulations_list_ui(
                                 }
                             });
 
-                            // Numéro de simulation
                             ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
                                 let sim_label = if is_selected_for_matrix {
                                     egui::RichText::new(format!("#{}", sim_id.0 + 1))
@@ -217,7 +202,6 @@ pub fn enhanced_simulations_list_ui(
                                 }
                             });
 
-                            // Score avec coloration
                             ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
                                 let score_value = score.get();
                                 let score_color = if score_value > 50.0 {
@@ -234,7 +218,6 @@ pub fn enhanced_simulations_list_ui(
                                     .monospace());
                             });
 
-                            // Bouton pour voir la matrice
                             ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
                                 if ui.button("Voir").clicked() {
                                     ui_state.selected_simulation = Some(sim_id.0);
@@ -242,7 +225,6 @@ pub fn enhanced_simulations_list_ui(
                                 }
                             });
 
-                            // Bouton de sauvegarde
                             ui.with_layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight), |ui| {
                                 if ui.button("💾").on_hover_text("Sauvegarder cette population").clicked() {
                                     save_ui.show_save_dialog = true;

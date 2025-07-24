@@ -18,7 +18,6 @@ use crate::resources::{
 };
 use crate::systems::spawning::FoodPositions;
 
-/// Structure pour stocker un génome avec son score et des statistiques
 #[derive(Clone)]
 struct ScoredGenome {
     genotype: Genotype,
@@ -26,7 +25,6 @@ struct ScoredGenome {
     generation: usize,
 }
 
-/// Statistiques de l'époque pour le logging
 #[derive(Default)]
 struct EpochStats {
     best_score: f32,
@@ -37,7 +35,6 @@ struct EpochStats {
     improvement: f32,
 }
 
-/// Réinitialise les positions et applique l'algorithme génétique amélioré
 pub fn reset_for_new_epoch(
     mut commands: Commands,
     grid: Res<GridParameters>,
@@ -49,71 +46,58 @@ pub fn reset_for_new_epoch(
     mut food_query: Query<(&mut Transform, &mut FoodRespawnTimer, &mut Visibility), (With<Food>, Without<Particle>)>,
     mut previous_best_score: Local<f32>,
 ) {
-    // Si c'est l'époque 0, on ne fait rien car les entités viennent d'être créées
     if sim_params.current_epoch == 0 {
         return;
     }
 
     let mut rng = rand::rng();
 
-    // === COLLECTE DES DONNÉES ET STATISTIQUES ===
     let mut scored_genomes: Vec<ScoredGenome> = simulations
         .iter()
         .map(|(_, genotype, score, _)| ScoredGenome {
-            genotype: *genotype,
+            genotype: genotype.clone(),
             score: score.get(),
             generation: sim_params.current_epoch,
         })
         .collect();
 
-    // Calculer les statistiques avant le tri
     let stats = calculate_epoch_stats(&scored_genomes, *previous_best_score);
-
-    // Trier par score décroissant
     scored_genomes.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-
-    // Mettre à jour le meilleur score précédent
     *previous_best_score = stats.best_score;
 
-    // === LOGGING DÉTAILLÉ ===
     log_genetic_algorithm_stats(&stats, &sim_params, &scored_genomes);
 
-    // === ALGORITHME GÉNÉTIQUE AMÉLIORÉ ===
     let elite_count = ((sim_params.simulation_count as f32 * sim_params.elite_ratio).ceil() as usize).max(1);
     let mut new_genomes = Vec::with_capacity(sim_params.simulation_count);
 
-    // 1. CONSERVATION DES ÉLITES (inchangé)
+    // Conservation des élites
     for i in 0..elite_count {
-        new_genomes.push(scored_genomes[i].genotype);
+        new_genomes.push(scored_genomes[i].genotype.clone());
     }
 
-    // 2. GÉNÉRATION DE NOUVEAUX INDIVIDUS
+    // Génération de nouveaux individus
     while new_genomes.len() < sim_params.simulation_count {
         let mut new_genotype;
 
         if rng.random::<f32>() < sim_params.crossover_rate && scored_genomes.len() >= 2 {
-            // CROSSOVER AMÉLIORÉ avec sélection pondérée
-            let parent1 = weighted_tournament_selection(&scored_genomes, &mut rng);
-            let parent2 = weighted_tournament_selection(&scored_genomes, &mut rng);
-            new_genotype = improved_crossover(&parent1, &parent2, &mut rng);
+            let parent1 = &weighted_tournament_selection(&scored_genomes, &mut rng);
+            let parent2 = &weighted_tournament_selection(&scored_genomes, &mut rng);
+            new_genotype = improved_crossover(parent1, parent2, &mut rng);
         } else {
-            // REPRODUCTION ASEXUÉE avec sélection pondérée
             let parent = weighted_tournament_selection(&scored_genomes, &mut rng);
             new_genotype = parent;
         }
 
-        // MUTATION ADAPTATIVE
         let adaptive_mutation_rate = calculate_adaptive_mutation_rate(
             &stats,
             sim_params.mutation_rate,
             sim_params.current_epoch
         );
 
-        improved_mutation(&mut new_genotype, adaptive_mutation_rate, &mut rng);
+        new_genotype.mutate(adaptive_mutation_rate, &mut rng);
         new_genomes.push(new_genotype);
     }
 
-    // === RÉINITIALISATION DES SIMULATIONS ===
     reset_simulations_with_new_genomes(
         &mut commands,
         &grid,
@@ -128,7 +112,6 @@ pub fn reset_for_new_epoch(
     );
 }
 
-/// Calcule les statistiques de l'époque
 fn calculate_epoch_stats(scored_genomes: &[ScoredGenome], previous_best: f32) -> EpochStats {
     if scored_genomes.is_empty() {
         return EpochStats::default();
@@ -140,7 +123,6 @@ fn calculate_epoch_stats(scored_genomes: &[ScoredGenome], previous_best: f32) ->
     let worst = scores.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).copied().unwrap_or(0.0);
     let average = scores.iter().sum::<f32>() / scores.len() as f32;
 
-    // Médiane
     let mut sorted_scores = scores.clone();
     sorted_scores.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let median = if sorted_scores.len() % 2 == 0 {
@@ -149,7 +131,6 @@ fn calculate_epoch_stats(scored_genomes: &[ScoredGenome], previous_best: f32) ->
         sorted_scores[sorted_scores.len() / 2]
     };
 
-    // Écart-type
     let variance = scores.iter()
         .map(|&x| (x - average).powi(2))
         .sum::<f32>() / scores.len() as f32;
@@ -167,7 +148,6 @@ fn calculate_epoch_stats(scored_genomes: &[ScoredGenome], previous_best: f32) ->
     }
 }
 
-/// Logging détaillé des statistiques génétiques
 fn log_genetic_algorithm_stats(
     stats: &EpochStats,
     sim_params: &SimulationParameters,
@@ -194,7 +174,6 @@ fn log_genetic_algorithm_stats(
     let elite_count = ((sim_params.simulation_count as f32 * sim_params.elite_ratio).ceil() as usize).max(1);
     info!("🏆 Élites conservées: {} / {}", elite_count, sim_params.simulation_count);
 
-    // Distribution des scores par quartiles
     let mut sorted_scores: Vec<f32> = genomes.iter().map(|g| g.score).collect();
     sorted_scores.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
@@ -207,14 +186,12 @@ fn log_genetic_algorithm_stats(
     }
 }
 
-/// Sélection par tournoi pondéré (favorise les meilleurs scores)
 fn weighted_tournament_selection(population: &[ScoredGenome], rng: &mut impl Rng) -> Genotype {
     const TOURNAMENT_SIZE: usize = 3;
 
-    // Sélection pondérée : plus de chance de sélectionner les meilleurs
     let weights: Vec<f32> = population.iter()
         .enumerate()
-        .map(|(i, _)| 1.0 / (1.0 + i as f32 * 0.1)) // Poids décroissant selon le rang
+        .map(|(i, _)| 1.0 / (1.0 + i as f32 * 0.1))
         .collect();
 
     let mut tournament_indices = Vec::new();
@@ -231,80 +208,57 @@ fn weighted_tournament_selection(population: &[ScoredGenome], rng: &mut impl Rng
         }
     }
 
-    // Retourner le meilleur du tournoi
     tournament_indices.into_iter()
         .map(|i| &population[i])
         .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap())
-        .map(|g| g.genotype)
-        .unwrap_or(population[0].genotype)
+        .map(|g| g.genotype.clone())
+        .unwrap_or(population[0].genotype.clone())
 }
 
-/// Crossover amélioré avec zones de préservation
 fn improved_crossover(parent1: &Genotype, parent2: &Genotype, rng: &mut impl Rng) -> Genotype {
-    let mut new_genome = 0u64;
-    let mut new_food_genome = 0u16;
+    let mut new_genotype = Genotype::new(parent1.type_count);
 
-    // Crossover par blocs pour préserver les interactions liées
-    let interactions = parent1.type_count * parent1.type_count;
-    let bits_per_interaction = (64 / interactions.max(1)).max(2).min(8);
-
-    // Crossover par interaction plutôt que par bit
-    for interaction in 0..interactions {
-        let bit_start = interaction * bits_per_interaction;
-        if bit_start + bits_per_interaction <= 64 {
-            let mask = ((1u64 << bits_per_interaction) - 1) << bit_start;
-
-            if rng.random_bool(0.5) {
-                new_genome |= parent1.genome & mask;
-            } else {
-                new_genome |= parent2.genome & mask;
-            }
+    // Crossover des forces particule-particule
+    for i in 0..parent1.force_matrix.len() {
+        if rng.random_bool(0.5) {
+            new_genotype.force_matrix[i] = parent1.force_matrix[i];
+        } else {
+            new_genotype.force_matrix[i] = parent2.force_matrix[i];
         }
     }
 
-    // Crossover pour le génome de nourriture (par type)
-    let bits_per_type = (16 / parent1.type_count.max(1)).max(3).min(8);
-    for type_idx in 0..parent1.type_count {
-        let bit_start = type_idx * bits_per_type;
-        if bit_start + bits_per_type <= 16 {
-            let mask = ((1u16 << bits_per_type) - 1) << bit_start;
-
-            if rng.random_bool(0.5) {
-                new_food_genome |= parent1.food_force_genome & mask;
-            } else {
-                new_food_genome |= parent2.food_force_genome & mask;
-            }
+    // Crossover des forces de nourriture
+    for i in 0..parent1.food_forces.len() {
+        if rng.random_bool(0.5) {
+            new_genotype.food_forces[i] = parent1.food_forces[i];
+        } else {
+            new_genotype.food_forces[i] = parent2.food_forces[i];
         }
     }
 
-    Genotype::new(new_genome, parent1.type_count, new_food_genome)
+    new_genotype
 }
 
-/// Mutation adaptative basée sur la diversité de la population
 fn calculate_adaptive_mutation_rate(
     stats: &EpochStats,
     base_rate: f32,
     epoch: usize
 ) -> f32 {
     let diversity_factor = if stats.std_deviation < 5.0 {
-        // Peu de diversité -> augmenter les mutations
         2.0
     } else if stats.std_deviation > 20.0 {
-        // Beaucoup de diversité -> réduire les mutations
         0.5
     } else {
         1.0
     };
 
     let stagnation_factor = if stats.improvement <= 0.0 {
-        // Stagnation -> augmenter les mutations
         1.5
     } else {
         1.0
     };
 
     let early_exploration = if epoch < 10 {
-        // Exploration initiale plus importante
         1.5
     } else {
         1.0
@@ -313,61 +267,6 @@ fn calculate_adaptive_mutation_rate(
     (base_rate * diversity_factor * stagnation_factor * early_exploration).min(0.5)
 }
 
-/// Mutation améliorée avec plusieurs stratégies
-fn improved_mutation(genotype: &mut Genotype, mutation_rate: f32, rng: &mut impl Rng) {
-    let interactions = genotype.type_count * genotype.type_count;
-    let bits_per_interaction = (64 / interactions.max(1)).max(2).min(8);
-
-    // Mutation des forces particule-particule
-    for interaction in 0..interactions {
-        if rng.random::<f32>() < mutation_rate {
-            let bit_start = interaction * bits_per_interaction;
-            if bit_start + bits_per_interaction <= 64 {
-
-                // 3 types de mutations possibles :
-                match rng.random_range(0..3) {
-                    0 => {
-                        // Mutation légère : inverser 1 bit
-                        let bit_offset = rng.random_range(0..bits_per_interaction);
-                        let bit_position = bit_start + bit_offset;
-                        genotype.genome ^= 1u64 << bit_position;
-                    },
-                    1 => {
-                        // Mutation moyenne : inverser 2-3 bits
-                        let bits_to_flip = rng.random_range(2..=3.min(bits_per_interaction));
-                        for _ in 0..bits_to_flip {
-                            let bit_offset = rng.random_range(0..bits_per_interaction);
-                            let bit_position = bit_start + bit_offset;
-                            genotype.genome ^= 1u64 << bit_position;
-                        }
-                    },
-                    2 => {
-                        // Mutation forte : remplacer toute l'interaction
-                        let mask = ((1u64 << bits_per_interaction) - 1) << bit_start;
-                        let new_value = (rng.random::<u64>() & ((1u64 << bits_per_interaction) - 1)) << bit_start;
-                        genotype.genome = (genotype.genome & !mask) | new_value;
-                    },
-                    _ => unreachable!(),
-                }
-            }
-        }
-    }
-
-    // Mutation des forces de nourriture (avec taux réduit)
-    if rng.random::<f32>() < mutation_rate * 0.3 {
-        let bits_per_type = (16 / genotype.type_count.max(1)).max(3).min(8);
-        let type_to_mutate = rng.random_range(0..genotype.type_count);
-        let bit_start = type_to_mutate * bits_per_type;
-
-        if bit_start + bits_per_type <= 16 {
-            let bit_offset = rng.random_range(0..bits_per_type);
-            let bit_position = bit_start + bit_offset;
-            genotype.food_force_genome ^= 1u16 << bit_position;
-        }
-    }
-}
-
-/// Réinitialise les simulations avec les nouveaux génomes
 fn reset_simulations_with_new_genomes(
     commands: &mut Commands,
     grid: &GridParameters,
@@ -380,7 +279,6 @@ fn reset_simulations_with_new_genomes(
     food_query: &mut Query<(&mut Transform, &mut FoodRespawnTimer, &mut Visibility), (With<Food>, Without<Particle>)>,
     rng: &mut impl Rng,
 ) {
-    // Générer de nouvelles positions pour les particules
     let particles_per_type = (sim_params.particle_count + particle_config.type_count - 1) / particle_config.type_count;
     let mut particle_positions = Vec::new();
 
@@ -390,18 +288,14 @@ fn reset_simulations_with_new_genomes(
         }
     }
 
-    // Réinitialiser chaque simulation avec son nouveau génome
     let mut sim_index = 0;
     for (_, mut genotype, mut score, children) in simulations.iter_mut() {
-        // Appliquer le nouveau génome
         if sim_index < new_genomes.len() {
-            *genotype = new_genomes[sim_index];
+            *genotype = new_genomes[sim_index].clone();
         }
 
-        // Réinitialiser le score
         *score = Score::default();
 
-        // Réinitialiser les particules de cette simulation
         let mut particle_index = 0;
         for child in children.iter() {
             if let Ok((mut transform, mut velocity, particle_type)) = particles.get_mut(child) {
@@ -418,7 +312,6 @@ fn reset_simulations_with_new_genomes(
         sim_index += 1;
     }
 
-    // Réinitialiser la nourriture
     let new_food_positions: Vec<Vec3> = (0..food_params.food_count)
         .map(|_| random_position_in_grid(grid, rng))
         .collect();
@@ -439,7 +332,6 @@ fn reset_simulations_with_new_genomes(
         sim_params.current_epoch, new_genomes.len());
 }
 
-/// Génère une position aléatoire dans la grille
 fn random_position_in_grid(grid: &GridParameters, rng: &mut impl Rng) -> Vec3 {
     let half_width = grid.width / 2.0;
     let half_height = grid.height / 2.0;

@@ -1,179 +1,194 @@
 use bevy::prelude::*;
-use crate::globals::FORCE_SCALE_FACTOR;
 use rand::Rng;
 
-/// Génome encodé dans un entier avec forces de nourriture
-#[derive(Component, Clone, Copy, Debug, Default)]
+/// Génome simplifié avec forces vectorisées
+#[derive(Component, Clone, Debug, Default)]
 pub struct Genotype {
-    pub genome: u64,
+    pub force_matrix: Vec<f32>,  // Matrice des forces particule-particule
+    pub food_forces: Vec<f32>,   // Forces de nourriture par type
     pub type_count: usize,
-    /// Force exercée par la nourriture sur chaque type de particule
-    /// Encodé dans les 16 bits de poids fort du génome
-    pub food_force_genome: u16,
 }
 
 impl Genotype {
-    pub fn new(genome: u64, type_count: usize, food_force_genome: u16) -> Self {
-        Self { genome, type_count, food_force_genome }
+    pub fn new(type_count: usize) -> Self {
+        let matrix_size = type_count * type_count;
+        Self {
+            force_matrix: vec![0.0; matrix_size],
+            food_forces: vec![0.0; type_count],
+            type_count,
+        }
     }
 
-    /// Génère un génome aléatoire avec forces de nourriture
+    /// Génère un génome aléatoire
     pub fn random(type_count: usize) -> Self {
-        let genome = rand::random::<u64>();
-        let food_force_genome = rand::random::<u16>();
-        Self { genome, type_count, food_force_genome }
+        let mut rng = rand::rng();
+        let matrix_size = type_count * type_count;
+
+        let force_matrix = (0..matrix_size)
+            .map(|i| {
+                let type_a = i / type_count;
+                let type_b = i % type_count;
+
+                if type_a == type_b {
+                    // Auto-répulsion pour éviter l'agglomération
+                    rng.random_range(-1.0..=-0.1)
+                } else {
+                    // Forces variées entre types différents
+                    rng.random_range(-1.0..=1.0)
+                }
+            })
+            .collect();
+
+        let food_forces = (0..type_count)
+            .map(|_| rng.random_range(-1.0..=1.0))
+            .collect();
+
+        Self {
+            force_matrix,
+            food_forces,
+            type_count,
+        }
     }
 
-    /// Décode la force d'interaction entre deux types (entre -1.0 et 1.0)
-    pub fn decode_force(&self, type_a: usize, type_b: usize) -> f32 {
-        let interactions = self.type_count * self.type_count;
-        // Avec 5 types max, on a 25 interactions, donc 64/25 = 2.56 bits par interaction
-        let bits_per_interaction = (64 / interactions.max(1)).max(2).min(8); // Entre 2 et 8 bits
-
-        // Calcule l'index dans la matrice d'interaction
+    /// Obtient la force entre deux types
+    pub fn get_force(&self, type_a: usize, type_b: usize) -> f32 {
         let index = type_a * self.type_count + type_b;
-        let bit_start = index * bits_per_interaction;
+        self.force_matrix.get(index).copied().unwrap_or(0.0)
+    }
 
-        // Protéger contre le dépassement
-        if bit_start >= 64 || bit_start + bits_per_interaction > 64 {
-            return 0.0;
+    /// Définit la force entre deux types
+    pub fn set_force(&mut self, type_a: usize, type_b: usize, force: f32) {
+        let index = type_a * self.type_count + type_b;
+        if index < self.force_matrix.len() {
+            self.force_matrix[index] = force;
+        }
+    }
+
+    /// Obtient la force de nourriture pour un type
+    pub fn get_food_force(&self, particle_type: usize) -> f32 {
+        self.food_forces.get(particle_type).copied().unwrap_or(0.0)
+    }
+
+    /// Crossover avec un autre génome
+    pub fn crossover(&self, other: &Self, rng: &mut impl Rng) -> Self {
+        let mut new_force_matrix = Vec::with_capacity(self.force_matrix.len());
+        let mut new_food_forces = Vec::with_capacity(self.food_forces.len());
+
+        // Crossover uniforme pour la matrice des forces
+        for i in 0..self.force_matrix.len() {
+            if rng.random_bool(0.5) {
+                new_force_matrix.push(self.force_matrix[i]);
+            } else {
+                new_force_matrix.push(other.force_matrix[i]);
+            }
         }
 
-        // Extrait les bits correspondants
-        let mask = (1u64 << bits_per_interaction) - 1;
-        let raw_value = (self.genome >> bit_start) & mask;
-
-        // Avec n bits, on a 2^n valeurs possibles
-        let max_value = (1u64 << bits_per_interaction) - 1;
-
-        // Normalisation linéaire entre -1 et 1
-        let normalized = (raw_value as f32 / max_value as f32) * 2.0 - 1.0;
-
-        // Pour avoir plus de variété, on utilise une distribution non-linéaire
-        // qui favorise les valeurs moyennes tout en permettant des extrêmes
-        let shaped = normalized.signum() * normalized.abs().powf(0.7);
-
-        // Arrondir à 3 décimales
-        (shaped * 1000.0).round() / 1000.0
-    }
-
-    /// Décode la force exercée par la nourriture sur un type de particule (entre -1.0 et 1.0)
-    pub fn decode_food_force(&self, particle_type: usize) -> f32 {
-        // Avec max 5 types, on a au moins 3 bits par type (16/5 = 3.2)
-        let bits_per_type = (16 / self.type_count.max(1)).max(3).min(8);
-        let bit_start = particle_type * bits_per_type;
-
-        if bit_start >= 16 || bit_start + bits_per_type > 16 {
-            return 0.0;
+        // Crossover uniforme pour les forces de nourriture
+        for i in 0..self.food_forces.len() {
+            if rng.random_bool(0.5) {
+                new_food_forces.push(self.food_forces[i]);
+            } else {
+                new_food_forces.push(other.food_forces[i]);
+            }
         }
 
-        // Extrait les bits
-        let mask = (1u16 << bits_per_type) - 1;
-        let raw_value = (self.food_force_genome >> bit_start) & mask;
-
-        // Normalise entre -1 et 1
-        let max_value = (1u16 << bits_per_type) - 1;
-        let normalized = (raw_value as f32 / max_value as f32) * 2.0 - 1.0;
-
-        // Même transformation que pour les forces particule-particule
-        let shaped = normalized.signum() * normalized.abs().powf(0.7);
-
-        // Arrondir à 3 décimales
-        (shaped * 1000.0).round() / 1000.0
+        Self {
+            force_matrix: new_force_matrix,
+            food_forces: new_food_forces,
+            type_count: self.type_count,
+        }
     }
 
-    /// Retourne la force avec le facteur d'échelle appliqué (pour le calcul physique)
-    pub fn get_scaled_force(&self, type_a: usize, type_b: usize) -> f32 {
-        self.decode_force(type_a, type_b) * FORCE_SCALE_FACTOR
+    /// Applique une mutation
+    pub fn mutate(&mut self, mutation_rate: f32, rng: &mut impl Rng) {
+        // Mutation de la matrice des forces
+        for force in &mut self.force_matrix {
+            if rng.random::<f32>() < mutation_rate {
+                *force += rng.random_range(-0.2..=0.2);
+                *force = force.clamp(-2.0, 2.0);
+            }
+        }
+
+        // Mutation des forces de nourriture
+        for force in &mut self.food_forces {
+            if rng.random::<f32>() < mutation_rate * 0.5 {
+                *force += rng.random_range(-0.2..=0.2);
+                *force = force.clamp(-2.0, 2.0);
+            }
+        }
     }
 
-    /// Retourne la force de nourriture avec le facteur d'échelle appliqué
-    pub fn get_scaled_food_force(&self, particle_type: usize) -> f32 {
-        self.decode_food_force(particle_type) * FORCE_SCALE_FACTOR
-    }
-
-    /// Retourne une matrice de toutes les forces d'interaction (normalisées)
+    /// Retourne une matrice de toutes les forces d'interaction
     pub fn get_force_matrix(&self) -> Vec<Vec<f32>> {
         let mut matrix = vec![vec![0.0; self.type_count]; self.type_count];
 
         for i in 0..self.type_count {
             for j in 0..self.type_count {
-                matrix[i][j] = self.decode_force(i, j);
+                matrix[i][j] = self.get_force(i, j);
             }
         }
 
         matrix
     }
 
-    /// Retourne un vecteur des forces de nourriture pour chaque type (normalisées)
-    pub fn get_food_forces(&self) -> Vec<f32> {
-        (0..self.type_count)
-            .map(|i| self.decode_food_force(i))
-            .collect()
-    }
+    /// Génère des forces intéressantes prédéfinies
+    pub fn set_interesting_forces(&mut self) {
+        // Efface les forces actuelles
+        self.force_matrix.fill(0.0);
+        self.food_forces.fill(0.0);
 
-    /// Effectue un crossover entre deux génomes
-    pub fn crossover(&self, other: &Self, rng: &mut impl Rng) -> Self {
-        // Crossover uniforme : chaque bit a 50% de chance de venir de chaque parent
-        let mut new_genome = 0u64;
-        for i in 0..64 {
-            let bit = if rng.random_bool(0.5) {
-                (self.genome >> i) & 1
-            } else {
-                (other.genome >> i) & 1
-            };
-            new_genome |= bit << i;
-        }
+        match self.type_count {
+            3 => {
+                // Configuration rock-paper-scissors
+                self.set_force(0, 1, 1.0);   // Rouge attire Vert
+                self.set_force(1, 2, 1.0);   // Vert attire Bleu
+                self.set_force(2, 0, 1.0);   // Bleu attire Rouge
+                self.set_force(1, 0, -0.5);  // Vert repousse Rouge
+                self.set_force(2, 1, -0.5);  // Bleu repousse Vert
+                self.set_force(0, 2, -0.5);  // Rouge repousse Bleu
 
-        // Crossover pour le génome de nourriture
-        let mut new_food_genome = 0u16;
-        for i in 0..16 {
-            let bit = if rng.random_bool(0.5) {
-                (self.food_force_genome >> i) & 1
-            } else {
-                (other.food_force_genome >> i) & 1
-            };
-            new_food_genome |= bit << i;
-        }
-
-        Self::new(new_genome, self.type_count, new_food_genome)
-    }
-
-    /// Applique une mutation au génome
-    pub fn mutate(&mut self, mutation_rate: f32, rng: &mut impl Rng) {
-        // Mutation du génome principal
-        let interactions = self.type_count * self.type_count;
-        let bits_per_interaction = (64 / interactions.max(1)).max(2).min(8);
-
-        // Pour chaque interaction, chance de mutation
-        for i in 0..interactions {
-            if rng.random::<f32>() < mutation_rate {
-                let bit_start = i * bits_per_interaction;
-                if bit_start < 64 && bit_start + bits_per_interaction <= 64 {
-                    // Mutation : inverser 1 ou 2 bits aléatoires
-                    let bits_to_flip = rng.random_range(1..=2.min(bits_per_interaction));
-                    for _ in 0..bits_to_flip {
-                        let bit_offset = rng.random_range(0..bits_per_interaction);
-                        let bit_position = bit_start + bit_offset;
-                        if bit_position < 64 {
-                            self.genome ^= 1u64 << bit_position;
-                        }
-                    }
+                // Auto-répulsion
+                for i in 0..3 {
+                    self.set_force(i, i, -0.3);
                 }
-            }
-        }
 
-        // Mutation du génome de nourriture (avec taux réduit)
-        if rng.random::<f32>() < mutation_rate * 0.5 {
-            let bits_per_type = (16 / self.type_count.max(1)).max(3).min(8);
-            let type_to_mutate = rng.random_range(0..self.type_count);
-            let bit_start = type_to_mutate * bits_per_type;
+                // Forces de nourriture variées
+                self.food_forces = vec![0.8, -0.3, 0.5];
+            },
+            4 => {
+                // Configuration plus complexe
+                self.set_force(0, 1, 1.5);   // Rouge attire fort Vert
+                self.set_force(1, 2, 0.8);   // Vert attire Bleu
+                self.set_force(2, 3, 1.2);   // Bleu attire fort Jaune
+                self.set_force(3, 0, 0.6);   // Jaune attire Rouge
 
-            if bit_start < 16 && bit_start + bits_per_type <= 16 {
-                let bit_offset = rng.random_range(0..bits_per_type);
-                let bit_position = bit_start + bit_offset;
-                if bit_position < 16 {
-                    self.food_force_genome ^= 1u16 << bit_position;
+                // Répulsions croisées
+                self.set_force(0, 2, -1.0);  // Rouge repousse Bleu
+                self.set_force(1, 3, -0.8);  // Vert repousse Jaune
+                self.set_force(2, 0, -0.6);  // Bleu repousse Rouge
+                self.set_force(3, 1, -1.2);  // Jaune repousse fort Vert
+
+                // Auto-répulsion
+                for i in 0..4 {
+                    self.set_force(i, i, -0.4);
+                }
+
+                // Forces de nourriture équilibrées
+                self.food_forces = vec![0.6, -0.4, 0.8, -0.2];
+            },
+            _ => {
+                // Configuration aléatoire pour autres nombres de types
+                let mut rng = rand::rng();
+                for i in 0..self.type_count {
+                    for j in 0..self.type_count {
+                        let force = if i == j {
+                            rng.random_range(-0.5..=-0.1)
+                        } else {
+                            rng.random_range(-1.0..=1.0)
+                        };
+                        self.set_force(i, j, force);
+                    }
+                    self.food_forces[i] = rng.random_range(-1.0..=1.0);
                 }
             }
         }

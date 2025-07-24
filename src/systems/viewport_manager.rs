@@ -63,7 +63,6 @@ fn calculate_adaptive_camera_distance(grid: &GridParameters, viewport_count: usi
     };
 
     let final_distance = base_distance * viewport_factor;
-    info!("🎥 Distance caméra adaptée : {:.0}", final_distance);
     final_distance
 }
 

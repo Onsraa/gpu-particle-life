@@ -33,8 +33,8 @@ pub struct SavedPopulation {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct SavedGenotype {
-    pub genome: u64,
-    pub food_force_genome: u16,
+    pub force_matrix: Vec<f32>,
+    pub food_forces: Vec<f32>,
     pub type_count: usize,
 }
 
@@ -74,7 +74,6 @@ pub enum SavedBoundaryMode {
     Teleport,
 }
 
-/// Ressource pour gérer les événements de sauvegarde
 #[derive(Resource, Default)]
 pub struct PopulationSaveEvents {
     pub save_requests: Vec<PopulationSaveRequest>,
@@ -87,14 +86,12 @@ pub struct PopulationSaveRequest {
     pub description: Option<String>,
 }
 
-/// Ressource pour stocker les populations sauvegardées disponibles
 #[derive(Resource, Default)]
 pub struct AvailablePopulations {
     pub populations: Vec<SavedPopulation>,
     pub loaded: bool,
 }
 
-/// Convertisseur depuis les ressources actuelles vers le format sauvegardé
 impl SavedPopulation {
     pub fn from_current_state(
         simulation_id: usize,
@@ -114,8 +111,8 @@ impl SavedPopulation {
             name,
             timestamp,
             genotype: SavedGenotype {
-                genome: genotype.genome,
-                food_force_genome: genotype.food_force_genome,
+                force_matrix: genotype.force_matrix.clone(),
+                food_forces: genotype.food_forces.clone(),
                 type_count: genotype.type_count,
             },
             score,
@@ -154,7 +151,6 @@ impl SavedPopulation {
         }
     }
 
-    /// Convertit vers les ressources Bevy
     pub fn to_bevy_resources(&self) -> (
         Genotype,
         SimulationParameters,
@@ -163,18 +159,18 @@ impl SavedPopulation {
         ParticleTypesConfig,
         BoundaryMode,
     ) {
-        let genotype = Genotype::new(
-            self.genotype.genome,
-            self.genotype.type_count,
-            self.genotype.food_force_genome,
-        );
+        let genotype = Genotype {
+            force_matrix: self.genotype.force_matrix.clone(),
+            food_forces: self.genotype.food_forces.clone(),
+            type_count: self.genotype.type_count,
+        };
 
         let sim_params = SimulationParameters {
             current_epoch: 0,
-            max_epochs: 100, // Valeur par défaut
+            max_epochs: 100,
             epoch_duration: self.simulation_params.epoch_duration,
             epoch_timer: Timer::from_seconds(self.simulation_params.epoch_duration, TimerMode::Once),
-            simulation_count: 1, // Pour le visualizer, une seule simulation
+            simulation_count: 1,
             particle_count: self.simulation_params.particle_count,
             particle_types: self.simulation_params.particle_types,
             simulation_speed: crate::resources::simulation::SimulationSpeed::Normal,
@@ -220,7 +216,6 @@ impl SavedPopulation {
     }
 }
 
-/// Système pour traiter les demandes de sauvegarde
 pub fn process_save_requests(
     mut save_events: ResMut<PopulationSaveEvents>,
     simulations: Query<(&SimulationId, &Genotype, &Score), With<Simulation>>,
@@ -231,7 +226,6 @@ pub fn process_save_requests(
     boundary_mode: Res<BoundaryMode>,
 ) {
     for request in save_events.save_requests.drain(..) {
-        // Trouver la simulation correspondante
         if let Some((_, genotype, score)) = simulations.iter()
             .find(|(sim_id, _, _)| sim_id.0 == request.simulation_id) {
 
@@ -257,15 +251,12 @@ pub fn process_save_requests(
     }
 }
 
-/// Sauvegarde une population dans un fichier JSON
 pub fn save_population_to_file(population: &SavedPopulation) -> Result<(), Box<dyn std::error::Error>> {
-    // Créer le dossier populations s'il n'existe pas
     let populations_dir = Path::new("populations");
     if !populations_dir.exists() {
         fs::create_dir_all(populations_dir)?;
     }
 
-    // Nom de fichier sécurisé
     let safe_name = population.name.chars()
         .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
         .collect::<String>();
@@ -273,14 +264,12 @@ pub fn save_population_to_file(population: &SavedPopulation) -> Result<(), Box<d
     let filename = format!("{}_{}.json", safe_name, population.timestamp);
     let file_path = populations_dir.join(filename);
 
-    // Sérialiser et sauvegarder
     let json = serde_json::to_string_pretty(population)?;
     fs::write(file_path, json)?;
 
     Ok(())
 }
 
-/// Charge toutes les populations sauvegardées
 pub fn load_all_populations() -> Result<Vec<SavedPopulation>, Box<dyn std::error::Error>> {
     let populations_dir = Path::new("populations");
     if !populations_dir.exists() {
@@ -306,13 +295,11 @@ pub fn load_all_populations() -> Result<Vec<SavedPopulation>, Box<dyn std::error
         }
     }
 
-    // Trier par timestamp décroissant (plus récent en premier)
     populations.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
     Ok(populations)
 }
 
-/// Système pour charger les populations au démarrage
 pub fn load_available_populations(mut available: ResMut<AvailablePopulations>) {
     if available.loaded {
         return;

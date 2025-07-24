@@ -68,7 +68,7 @@ pub fn spawn_visualizer_simulation(
         .spawn((
             Simulation,
             SimulationId(0), // Toujours ID 0 pour le visualiseur
-            visualizer_genome.0, // Utiliser le génome sauvegardé
+            visualizer_genome.0.clone(), // Utiliser le génome sauvegardé
             Score::default(),
             RenderLayers::layer(1),
         ))
