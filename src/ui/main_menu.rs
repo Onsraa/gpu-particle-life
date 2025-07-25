@@ -93,7 +93,7 @@ pub fn main_menu_ui(
                 .size(28.0)
                 .strong()
                 .color(egui::Color32::from_rgb(100, 200, 255)));
-            ui.label(egui::RichText::new("Évolution génétique de particules autonomes")
+            ui.label(egui::RichText::new("Évolution génétique de particules de vie")
                 .size(14.0)
                 .italics()
                 .color(egui::Color32::GRAY));
