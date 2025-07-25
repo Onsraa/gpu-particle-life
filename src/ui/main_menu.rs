@@ -11,9 +11,9 @@ use crate::resources::{
 use crate::states::app::AppState;
 use crate::globals::*;
 use crate::plugins::compute::ComputeEnabled;
-use crate::systems::population_save::load_available_populations; 
+use crate::systems::population_save::load_available_populations;
 
-/// Configuration temporaire pour le menu
+/// Configuration temporaire pour le menu avec paramètres génétiques optimisés
 #[derive(Resource)]
 pub struct MenuConfig {
     // Paramètres de grille
@@ -41,7 +41,7 @@ pub struct MenuConfig {
     // GPU compute
     pub use_gpu: bool,
 
-    // Paramètres génétiques
+    // Paramètres génétiques OPTIMISÉS
     pub elite_ratio: f32,
     pub mutation_rate: f32,
     pub crossover_rate: f32,
@@ -69,9 +69,10 @@ impl Default for MenuConfig {
             boundary_mode: BoundaryMode::default(),
             use_gpu: false,
 
-            elite_ratio: DEFAULT_ELITE_RATIO,
-            mutation_rate: DEFAULT_MUTATION_RATE,
-            crossover_rate: DEFAULT_CROSSOVER_RATE,
+            // NOUVEAUX PARAMÈTRES OPTIMISÉS
+            elite_ratio: DEFAULT_ELITE_RATIO,       // 30% au lieu de 10%
+            mutation_rate: DEFAULT_MUTATION_RATE,   // 15% au lieu de 10%
+            crossover_rate: DEFAULT_CROSSOVER_RATE, // 25% au lieu de 70%
         }
     }
 }
@@ -93,7 +94,7 @@ pub fn main_menu_ui(
                 .size(28.0)
                 .strong()
                 .color(egui::Color32::from_rgb(100, 200, 255)));
-            ui.label(egui::RichText::new("Évolution génétique de particules autonomes")
+            ui.label(egui::RichText::new("Évolution génétique de particules de vie")
                 .size(14.0)
                 .italics()
                 .color(egui::Color32::GRAY));
@@ -106,7 +107,7 @@ pub fn main_menu_ui(
         egui::ScrollArea::vertical().show(ui, |ui| {
             // === Paramètres de grille ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("Paramètres de Grille").size(16.0).strong());
+                ui.label(egui::RichText::new("🌍 Paramètres de Grille").size(16.0).strong());
                 ui.separator();
 
                 egui::Grid::new("grid_params")
@@ -200,36 +201,13 @@ pub fn main_menu_ui(
                             .suffix(" unités"));
                         ui.end_row();
                     });
-
-                ui.add_space(5.0);
-
-                // Informations de diversité détaillées
-                ui.collapsing("ℹ Diversité génétique", |ui| {
-                    let interactions = menu_config.particle_types * menu_config.particle_types;
-                    let bits_per_interaction = (64 / interactions.max(1)).max(2).min(8);
-                    let diversity_levels = 1 << bits_per_interaction;
-                    let resolution = 2.0 / (diversity_levels - 1) as f32;
-
-                    ui.label(format!("• {} interactions possibles ({}×{})", interactions, menu_config.particle_types, menu_config.particle_types));
-                    ui.label(format!("• {} bits par interaction", bits_per_interaction));
-                    ui.label(format!("• {} niveaux de force distincts", diversity_levels));
-                    ui.label(format!("• Résolution: {:.4} par step", resolution));
-
-                    match menu_config.particle_types {
-                        2 => ui.label("Excellent: très fine granularité"),
-                        3 => ui.label("Recommandé: bon équilibre diversité/granularité"),
-                        4 => ui.label("Acceptable: granularité moyenne"),
-                        5 => ui.label("Limité: seulement 4 niveaux par interaction"),
-                        _ => ui.label("Non recommandé"),
-                    };
-                });
             });
 
             ui.add_space(10.0);
 
-            // === Paramètres génétiques ===
+            // === Paramètres génétiques AMÉLIORÉS ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("Paramètres Génétiques").size(16.0).strong());
+                ui.label(egui::RichText::new("Algorithme Génétique").size(16.0).strong());
                 ui.separator();
 
                 egui::Grid::new("genetic_params")
@@ -238,7 +216,7 @@ pub fn main_menu_ui(
                     .show(ui, |ui| {
                         ui.label("Ratio d'élites:");
                         ui.add(egui::DragValue::new(&mut menu_config.elite_ratio)
-                            .range(0.01..=0.5)
+                            .range(0.1..=0.5)
                             .speed(0.01)
                             .fixed_decimals(2));
                         ui.label(format!("({:.0}% conservés)", menu_config.elite_ratio * 100.0));
@@ -246,7 +224,7 @@ pub fn main_menu_ui(
 
                         ui.label("Taux de mutation:");
                         ui.add(egui::DragValue::new(&mut menu_config.mutation_rate)
-                            .range(0.0..=1.0)
+                            .range(0.05..=0.5)
                             .speed(0.01)
                             .fixed_decimals(2));
                         ui.label(format!("({:.0}% de chance)", menu_config.mutation_rate * 100.0));
@@ -254,7 +232,7 @@ pub fn main_menu_ui(
 
                         ui.label("Taux de crossover:");
                         ui.add(egui::DragValue::new(&mut menu_config.crossover_rate)
-                            .range(0.0..=1.0)
+                            .range(0.1..=0.8)
                             .speed(0.01)
                             .fixed_decimals(2));
                         ui.label(format!("({:.0}% de chance)", menu_config.crossover_rate * 100.0));
@@ -262,16 +240,37 @@ pub fn main_menu_ui(
                     });
 
                 ui.add_space(5.0);
-                ui.label(egui::RichText::new("ℹ Algorithme génétique amélioré avec mutation adaptative")
-                    .small()
-                    .color(egui::Color32::GRAY));
+
+                // Afficher les améliorations apportées
+                ui.collapsing("ℹ Améliorations de l'algorithme génétique", |ui| {
+                    ui.label("✅ Crossover par relations symétriques");
+                    ui.label("✅ Validation de cohérence stratégique");
+                    ui.label("✅ Mutation adaptative selon la performance");
+                    ui.label("✅ Sélection par tournoi pondéré");
+                    ui.label("✅ Injection de diversité automatique");
+                    ui.label("✅ Préservation des écosystèmes émergents");
+
+                    ui.add_space(5.0);
+                    let optimization_score = calculate_optimization_score(&menu_config);
+                    let score_color = if optimization_score > 80.0 {
+                        egui::Color32::GREEN
+                    } else if optimization_score > 60.0 {
+                        egui::Color32::YELLOW
+                    } else {
+                        egui::Color32::from_rgb(255, 165, 0)
+                    };
+
+                    ui.label(egui::RichText::new(format!("Score d'optimisation: {:.0}/100", optimization_score))
+                        .color(score_color)
+                        .strong());
+                });
             });
 
             ui.add_space(10.0);
 
             // === Paramètres de nourriture ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("Paramètres de Nourriture").size(16.0).strong());
+                ui.label(egui::RichText::new("🍎 Paramètres de Nourriture").size(16.0).strong());
                 ui.separator();
 
                 egui::Grid::new("food_params")
@@ -313,7 +312,7 @@ pub fn main_menu_ui(
 
             // === Mode de bords ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("Mode de Bords").size(16.0).strong());
+                ui.label(egui::RichText::new("🌀 Mode de Bords").size(16.0).strong());
                 ui.separator();
 
                 ui.horizontal(|ui| {
@@ -336,7 +335,7 @@ pub fn main_menu_ui(
 
             // === Paramètres de performance ===
             ui.group(|ui| {
-                ui.label(egui::RichText::new("Performance").size(16.0).strong());
+                ui.label(egui::RichText::new("🚀 Performance").size(16.0).strong());
                 ui.separator();
 
                 ui.horizontal(|ui| {
@@ -366,9 +365,9 @@ pub fn main_menu_ui(
                 ui.horizontal(|ui| {
                     // Bouton principal : Lancer Simulation
                     if ui.add_sized([200.0, 50.0],
-                                    egui::Button::new(egui::RichText::new("Lancer la Simulation").size(18.0))
+                                    egui::Button::new(egui::RichText::new("Lancer Simulation").size(16.0))
                                         .fill(egui::Color32::from_rgb(0, 120, 215)))
-                        .on_hover_text("Démarre une nouvelle simulation avec algorithme génétique")
+                        .on_hover_text("Démarre une simulation avec l'algorithme génétique optimisé")
                         .clicked() {
 
                         apply_configuration(&mut commands, &menu_config);
@@ -379,7 +378,7 @@ pub fn main_menu_ui(
 
                     // Bouton Visualiseur
                     if ui.add_sized([180.0, 50.0],
-                                    egui::Button::new(egui::RichText::new("Visualiseur").size(16.0))
+                                    egui::Button::new(egui::RichText::new("🔍 Visualiseur").size(16.0))
                                         .fill(egui::Color32::from_rgb(40, 160, 90)))
                         .on_hover_text("Visualise les populations sauvegardées")
                         .clicked() {
@@ -402,9 +401,32 @@ pub fn main_menu_ui(
 
                 ui.add_space(10.0);
 
+                // Boutons de configuration rapide
+                ui.horizontal(|ui| {
+                    if ui.button("Config Haute Performance")
+                        .on_hover_text("Paramètres optimisés pour de grandes populations")
+                        .clicked() {
+                        apply_high_performance_preset(&mut menu_config);
+                    }
+
+                    if ui.button("Config Exploration")
+                        .on_hover_text("Paramètres favorisant l'exploration génétique")
+                        .clicked() {
+                        apply_exploration_preset(&mut menu_config);
+                    }
+
+                    if ui.button("Config Précision")
+                        .on_hover_text("Paramètres favorisant la précision des stratégies")
+                        .clicked() {
+                        apply_precision_preset(&mut menu_config);
+                    }
+                });
+
+                ui.add_space(10.0);
+
                 // Bouton secondaire : Réinitialiser
                 if ui.button(egui::RichText::new("⚙ Réinitialiser").size(14.0))
-                    .on_hover_text("Remet tous les paramètres aux valeurs par défaut")
+                    .on_hover_text("Remet tous les paramètres aux valeurs par défaut optimisées")
                     .clicked() {
                     *menu_config = MenuConfig::default();
                 }
@@ -416,7 +438,10 @@ pub fn main_menu_ui(
             ui.separator();
             ui.vertical_centered(|ui| {
                 ui.add_space(10.0);
-                ui.label(egui::RichText::new("Simulation 3D avec Bevy 0.16 • Algorithme génétique adaptatif")
+                ui.label(egui::RichText::new("Algorithme génétique avancé • Préservation des stratégies émergentes")
+                    .small()
+                    .color(egui::Color32::GREEN));
+                ui.label(egui::RichText::new("Simulation 3D avec Bevy 0.16 • Validation de cohérence • Crossover structuré")
                     .small()
                     .color(egui::Color32::GRAY));
                 ui.label(egui::RichText::new("Échap: Quitter • Espace: Pause simulation • Sauvegarde: bouton 💾")
@@ -426,6 +451,75 @@ pub fn main_menu_ui(
             });
         });
     });
+}
+
+fn calculate_optimization_score(config: &MenuConfig) -> f32 {
+    let mut score = 0.0;
+
+    // Score élitisme (optimal entre 20-40%)
+    let elite_score = if config.elite_ratio >= 0.2 && config.elite_ratio <= 0.4 {
+        100.0
+    } else if config.elite_ratio >= 0.1 && config.elite_ratio <= 0.5 {
+        80.0
+    } else {
+        40.0
+    };
+    score += elite_score * 0.3;
+
+    // Score mutation (optimal entre 10-20%)
+    let mutation_score = if config.mutation_rate >= 0.1 && config.mutation_rate <= 0.2 {
+        100.0
+    } else if config.mutation_rate >= 0.05 && config.mutation_rate <= 0.3 {
+        80.0
+    } else {
+        40.0
+    };
+    score += mutation_score * 0.3;
+
+    // Score crossover (optimal entre 20-40%)
+    let crossover_score = if config.crossover_rate >= 0.2 && config.crossover_rate <= 0.4 {
+        100.0
+    } else if config.crossover_rate >= 0.1 && config.crossover_rate <= 0.5 {
+        80.0
+    } else {
+        40.0
+    };
+    score += crossover_score * 0.2;
+
+    // Score équilibre population
+    let pop_score = if config.simulation_count >= 4 && config.simulation_count <= 12 {
+        100.0
+    } else {
+        70.0
+    };
+    score += pop_score * 0.2;
+
+    score
+}
+
+fn apply_high_performance_preset(config: &mut MenuConfig) {
+    config.elite_ratio = 0.4;
+    config.mutation_rate = 0.1;
+    config.crossover_rate = 0.2;
+    config.simulation_count = 8;
+    config.particle_count = 200;
+    config.use_gpu = true;
+}
+
+fn apply_exploration_preset(config: &mut MenuConfig) {
+    config.elite_ratio = 0.2;
+    config.mutation_rate = 0.25;
+    config.crossover_rate = 0.4;
+    config.simulation_count = 12;
+    config.particle_count = 100;
+}
+
+fn apply_precision_preset(config: &mut MenuConfig) {
+    config.elite_ratio = 0.5;
+    config.mutation_rate = 0.08;
+    config.crossover_rate = 0.15;
+    config.simulation_count = 6;
+    config.particle_count = 150;
 }
 
 fn apply_configuration(commands: &mut Commands, config: &MenuConfig) {
@@ -447,9 +541,9 @@ fn apply_configuration(commands: &mut Commands, config: &MenuConfig) {
         simulation_speed: crate::resources::simulation::SimulationSpeed::Normal,
         max_force_range: config.max_force_range,
         velocity_half_life: 0.043,
-        elite_ratio: config.elite_ratio,
-        mutation_rate: config.mutation_rate,
-        crossover_rate: config.crossover_rate,
+        elite_ratio: config.elite_ratio,         // NOUVEAU
+        mutation_rate: config.mutation_rate,     // NOUVEAU
+        crossover_rate: config.crossover_rate,   // NOUVEAU
     });
 
     commands.insert_resource(ParticleTypesConfig::new(config.particle_types));
@@ -465,11 +559,14 @@ fn apply_configuration(commands: &mut Commands, config: &MenuConfig) {
 
     commands.insert_resource(ComputeEnabled(config.use_gpu));
 
-    info!("Configuration appliquée:");
+    info!("🧬 Configuration génétique optimisée appliquée:");
     info!("  • Grille: {}×{}×{}", config.grid_width, config.grid_height, config.grid_depth);
     info!("  • Simulations: {} avec {} particules chacune", config.simulation_count, config.particle_count);
     info!("  • Types: {} (diversité: {} niveaux)", config.particle_types, 1 << ((64 / (config.particle_types * config.particle_types).max(1)).max(2).min(8)));
-    info!("  • Algorithme génétique: {:.0}% élites, {:.0}% mutation, {:.0}% crossover",
-          config.elite_ratio * 100.0, config.mutation_rate * 100.0, config.crossover_rate * 100.0);
+    info!("  • 🧬 ALGORITHME GÉNÉTIQUE OPTIMISÉ:");
+    info!("    - {:.0}% élites (préservation des stratégies)", config.elite_ratio * 100.0);
+    info!("    - {:.0}% mutation adaptative", config.mutation_rate * 100.0);
+    info!("    - {:.0}% crossover structuré", config.crossover_rate * 100.0);
     info!("  • GPU Compute: {}", if config.use_gpu { "Activé" } else { "CPU seulement" });
+    info!("  • Score d'optimisation: {:.0}/100", calculate_optimization_score(config));
 }

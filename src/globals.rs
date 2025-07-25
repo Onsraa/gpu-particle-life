@@ -32,10 +32,15 @@ pub const FORCE_SCALE_FACTOR: f32 = 80.0;
 pub const MIN_DISTANCE: f32 = 0.001;
 pub const PARTICLE_REPULSION_STRENGTH: f32 = 100.0;
 
-// Paramètres génétiques
-pub const DEFAULT_ELITE_RATIO: f32 = 0.1; // 10% des génomes gardés
-pub const DEFAULT_MUTATION_RATE: f32 = 0.1; // 10% de chance de mutation
-pub const DEFAULT_CROSSOVER_RATE: f32 = 0.7; // 70% de crossover
+// Paramètres génétiques OPTIMISÉS pour préserver les stratégies cohérentes
+pub const DEFAULT_ELITE_RATIO: f32 = 0.3; // 30% des génomes gardés (vs 10% avant)
+pub const DEFAULT_MUTATION_RATE: f32 = 0.15; // 15% de chance de mutation (vs 10% avant)
+pub const DEFAULT_CROSSOVER_RATE: f32 = 0.25; // 25% de crossover (vs 70% avant)
+
+// Nouveaux paramètres pour la validation de cohérence
+pub const MIN_STRATEGY_COHERENCE: f32 = 0.3; // Seuil minimum de cohérence acceptable
+pub const DIVERSITY_INJECTION_RATE: f32 = 0.1; // 10% d'injection si faible diversité
+pub const LIGHT_ELITE_MUTATION: f32 = 0.01; // Mutation très légère des élites
 
 // Paramètres de rendu
 pub const PARTICLE_SUBDIVISIONS: u32 = 8;

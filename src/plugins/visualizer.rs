@@ -28,20 +28,21 @@ impl Plugin for VisualizerPlugin {
                     spawn_food,
                 ).chain(),
             )
-            // Système CPU uniquement
+            // Système CPU uniquement - avec wrapper pour éviter les conflits
             .add_systems(
                 Update,
                 (
                     visualizer_physics_system,
-                    detect_food_collision.after(visualizer_physics_system),
+                    visualizer_food_collision_cpu,
                 )
+                    .chain()
                     .run_if(in_state(AppState::Visualization))
                     .run_if(compute_disabled),
             )
-            // Système GPU (si activé)
+            // Système GPU (si activé) - avec wrapper pour éviter les conflits
             .add_systems(
                 Update,
-                detect_food_collision
+                visualizer_food_collision_gpu
                     .run_if(in_state(AppState::Visualization))
                     .run_if(compute_enabled),
             )
@@ -79,6 +80,46 @@ fn visualizer_physics_system(
     );
 }
 
+/// Wrapper CPU pour detect_food_collision - évite les conflits avec SimulationPlugin
+fn visualizer_food_collision_cpu(
+    commands: Commands,
+    time: Res<Time>,
+    particles: Query<(&Transform, &ChildOf), With<Particle>>,
+    food_query: Query<
+        (
+            Entity,
+            &Transform,
+            &crate::components::food::FoodValue,
+            &mut crate::components::food::FoodRespawnTimer,
+            &ViewVisibility,
+        ),
+        With<Food>,
+    >,
+    simulations: Query<&mut crate::components::score::Score, With<Simulation>>,
+) {
+    detect_food_collision(commands, time, particles, food_query, simulations);
+}
+
+/// Wrapper GPU pour detect_food_collision - évite les conflits avec SimulationPlugin
+fn visualizer_food_collision_gpu(
+    commands: Commands,
+    time: Res<Time>,
+    particles: Query<(&Transform, &ChildOf), With<Particle>>,
+    food_query: Query<
+        (
+            Entity,
+            &Transform,
+            &crate::components::food::FoodValue,
+            &mut crate::components::food::FoodRespawnTimer,
+            &ViewVisibility,
+        ),
+        With<Food>,
+    >,
+    simulations: Query<&mut crate::components::score::Score, With<Simulation>>,
+) {
+    detect_food_collision(commands, time, particles, food_query, simulations);
+}
+
 fn cleanup_visualization(
     mut commands: Commands,
     simulations: Query<Entity, With<crate::components::simulation::Simulation>>,
@@ -91,5 +132,5 @@ fn cleanup_visualization(
         commands.entity(entity).despawn();
     }
 
-    info!("Nettoyage de la visualisation terminé");
+    info!("🧹 Nettoyage de la visualisation terminé");
 }

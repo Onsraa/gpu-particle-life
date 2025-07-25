@@ -23,16 +23,41 @@ struct ScoredGenome {
     genotype: Genotype,
     score: f32,
     generation: usize,
+    coherence: f32,
+    fitness_trend: f32,
 }
 
 #[derive(Default)]
-struct EpochStats {
+pub struct EpochStats {
     best_score: f32,
     worst_score: f32,
     average_score: f32,
     median_score: f32,
     std_deviation: f32,
     improvement: f32,
+    average_coherence: f32,
+    diversity_index: f32,
+}
+
+#[derive(Default)]
+struct GeneticConfig {
+    elite_ratio: f32,           // 30% au lieu de 10%
+    mutation_rate: f32,         // Taux de base
+    crossover_rate: f32,        // 25% au lieu de 70%
+    coherence_threshold: f32,   // Seuil minimum de cohérence
+    diversity_pressure: f32,    // Pression pour maintenir la diversité
+}
+
+impl GeneticConfig {
+    fn optimized() -> Self {
+        Self {
+            elite_ratio: 0.3,           // Plus d'élitisme
+            mutation_rate: 0.15,        // Mutation modérée
+            crossover_rate: 0.25,       // Moins de crossover
+            coherence_threshold: 0.3,   // Rejeter les génomes trop incohérents
+            diversity_pressure: 0.1,    // Favoriser la diversité
+        }
+    }
 }
 
 pub fn reset_for_new_epoch(
@@ -44,60 +69,38 @@ pub fn reset_for_new_epoch(
     mut simulations: Query<(&SimulationId, &mut Genotype, &mut Score, &Children), With<Simulation>>,
     mut particles: Query<(&mut Transform, &mut Velocity, &ParticleType), With<Particle>>,
     mut food_query: Query<(&mut Transform, &mut FoodRespawnTimer, &mut Visibility), (With<Food>, Without<Particle>)>,
-    mut previous_best_score: Local<f32>,
+    mut previous_stats: Local<Option<EpochStats>>,
 ) {
     if sim_params.current_epoch == 0 {
         return;
     }
 
     let mut rng = rand::rng();
+    let genetic_config = GeneticConfig::optimized();
 
-    let mut scored_genomes: Vec<ScoredGenome> = simulations
-        .iter()
-        .map(|(_, genotype, score, _)| ScoredGenome {
-            genotype: genotype.clone(),
-            score: score.get(),
-            generation: sim_params.current_epoch,
-        })
-        .collect();
+    // Collecter et évaluer les génomes avec leurs métriques étendues
+    let mut scored_genomes = collect_and_evaluate_genomes(&simulations, sim_params.current_epoch);
 
-    let stats = calculate_epoch_stats(&scored_genomes, *previous_best_score);
-    scored_genomes.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-    *previous_best_score = stats.best_score;
+    let current_stats = calculate_epoch_stats(&scored_genomes, previous_stats.as_ref());
+    log_advanced_genetic_stats(&current_stats, &sim_params, &scored_genomes);
 
-    log_genetic_algorithm_stats(&stats, &sim_params, &scored_genomes);
+    // Trier par score combiné (performance + cohérence + diversité)
+    scored_genomes.sort_by(|a, b| {
+        let score_a = calculate_combined_fitness(a, &current_stats, &genetic_config);
+        let score_b = calculate_combined_fitness(b, &current_stats, &genetic_config);
+        score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+    });
 
-    let elite_count = ((sim_params.simulation_count as f32 * sim_params.elite_ratio).ceil() as usize).max(1);
-    let mut new_genomes = Vec::with_capacity(sim_params.simulation_count);
+    // Générer la nouvelle population avec l'algorithme amélioré
+    let new_genomes = generate_improved_population(
+        &scored_genomes,
+        sim_params.simulation_count,
+        &genetic_config,
+        &current_stats,
+        &mut rng
+    );
 
-    // Conservation des élites
-    for i in 0..elite_count {
-        new_genomes.push(scored_genomes[i].genotype.clone());
-    }
-
-    // Génération de nouveaux individus
-    while new_genomes.len() < sim_params.simulation_count {
-        let mut new_genotype;
-
-        if rng.random::<f32>() < sim_params.crossover_rate && scored_genomes.len() >= 2 {
-            let parent1 = &weighted_tournament_selection(&scored_genomes, &mut rng);
-            let parent2 = &weighted_tournament_selection(&scored_genomes, &mut rng);
-            new_genotype = improved_crossover(parent1, parent2, &mut rng);
-        } else {
-            let parent = weighted_tournament_selection(&scored_genomes, &mut rng);
-            new_genotype = parent;
-        }
-
-        let adaptive_mutation_rate = calculate_adaptive_mutation_rate(
-            &stats,
-            sim_params.mutation_rate,
-            sim_params.current_epoch
-        );
-
-        new_genotype.mutate(adaptive_mutation_rate, &mut rng);
-        new_genomes.push(new_genotype);
-    }
-
+    // Appliquer les nouveaux génomes
     reset_simulations_with_new_genomes(
         &mut commands,
         &grid,
@@ -110,18 +113,66 @@ pub fn reset_for_new_epoch(
         &mut food_query,
         &mut rng,
     );
+
+    *previous_stats = Some(current_stats);
 }
 
-fn calculate_epoch_stats(scored_genomes: &[ScoredGenome], previous_best: f32) -> EpochStats {
+fn collect_and_evaluate_genomes(
+    simulations: &Query<(&SimulationId, &mut Genotype, &mut Score, &Children), With<Simulation>>,
+    current_epoch: usize,
+) -> Vec<ScoredGenome> {
+    simulations
+        .iter()
+        .map(|(_, genotype, score, _)| {
+            let mut genotype_copy = genotype.clone();
+            genotype_copy.update_fitness_history(score.get());
+
+            ScoredGenome {
+                coherence: genotype_copy.strategy_coherence,
+                fitness_trend: genotype_copy.get_fitness_trend(),
+                genotype: genotype_copy,
+                score: score.get(),
+                generation: current_epoch,
+            }
+        })
+        .collect()
+}
+
+fn calculate_combined_fitness(
+    genome: &ScoredGenome,
+    stats: &EpochStats,
+    config: &GeneticConfig
+) -> f32 {
+    let normalized_score = if stats.best_score > stats.worst_score {
+        (genome.score - stats.worst_score) / (stats.best_score - stats.worst_score)
+    } else {
+        0.5
+    };
+
+    let coherence_bonus = if genome.coherence > config.coherence_threshold {
+        (genome.coherence - config.coherence_threshold) / (1.0 - config.coherence_threshold)
+    } else {
+        0.0
+    };
+
+    let trend_bonus = genome.fitness_trend.max(0.0) / 10.0; // Normaliser la tendance
+
+    // Score final pondéré
+    normalized_score * 0.6 + coherence_bonus * 0.3 + trend_bonus * 0.1
+}
+
+fn calculate_epoch_stats(scored_genomes: &[ScoredGenome], previous: Option<&EpochStats>) -> EpochStats {
     if scored_genomes.is_empty() {
         return EpochStats::default();
     }
 
     let scores: Vec<f32> = scored_genomes.iter().map(|g| g.score).collect();
+    let coherences: Vec<f32> = scored_genomes.iter().map(|g| g.coherence).collect();
 
     let best = scores.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).copied().unwrap_or(0.0);
     let worst = scores.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).copied().unwrap_or(0.0);
     let average = scores.iter().sum::<f32>() / scores.len() as f32;
+    let average_coherence = coherences.iter().sum::<f32>() / coherences.len() as f32;
 
     let mut sorted_scores = scores.clone();
     sorted_scores.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -136,7 +187,14 @@ fn calculate_epoch_stats(scored_genomes: &[ScoredGenome], previous_best: f32) ->
         .sum::<f32>() / scores.len() as f32;
     let std_deviation = variance.sqrt();
 
-    let improvement = best - previous_best;
+    let improvement = if let Some(prev) = previous {
+        best - prev.best_score
+    } else {
+        0.0
+    };
+
+    // Calculer un index de diversité génétique
+    let diversity_index = calculate_genetic_diversity(scored_genomes);
 
     EpochStats {
         best_score: best,
@@ -145,126 +203,267 @@ fn calculate_epoch_stats(scored_genomes: &[ScoredGenome], previous_best: f32) ->
         median_score: median,
         std_deviation,
         improvement,
+        average_coherence,
+        diversity_index,
     }
 }
 
-fn log_genetic_algorithm_stats(
-    stats: &EpochStats,
-    sim_params: &SimulationParameters,
-    genomes: &[ScoredGenome],
-) {
-    info!("=== ALGORITHME GÉNÉTIQUE - ÉPOQUE {} ===", sim_params.current_epoch);
-    info!("📊 Statistiques des scores:");
-    info!("   • Meilleur: {:.2}", stats.best_score);
-    info!("   • Pire: {:.2}", stats.worst_score);
-    info!("   • Moyenne: {:.2}", stats.average_score);
-    info!("   • Médiane: {:.2}", stats.median_score);
-    info!("   • Écart-type: {:.2}", stats.std_deviation);
+fn calculate_genetic_diversity(genomes: &[ScoredGenome]) -> f32 {
+    if genomes.len() < 2 {
+        return 0.0;
+    }
 
-    if stats.improvement > 0.0 {
-        info!("📈 Amélioration: +{:.2} ({}%)",
-            stats.improvement,
-            (stats.improvement / (stats.best_score - stats.improvement) * 100.0).max(0.0));
-    } else if stats.improvement < 0.0 {
-        info!("📉 Régression: {:.2}", stats.improvement);
+    let mut total_distance = 0.0;
+    let mut comparisons = 0;
+
+    // Calculer la distance génétique moyenne entre tous les génomes
+    for i in 0..genomes.len() {
+        for j in i+1..genomes.len() {
+            let distance = calculate_genetic_distance(&genomes[i].genotype, &genomes[j].genotype);
+            total_distance += distance;
+            comparisons += 1;
+        }
+    }
+
+    if comparisons > 0 {
+        total_distance / comparisons as f32
     } else {
-        info!("➡️ Stagnation (pas d'amélioration)");
-    }
-
-    let elite_count = ((sim_params.simulation_count as f32 * sim_params.elite_ratio).ceil() as usize).max(1);
-    info!("🏆 Élites conservées: {} / {}", elite_count, sim_params.simulation_count);
-
-    let mut sorted_scores: Vec<f32> = genomes.iter().map(|g| g.score).collect();
-    sorted_scores.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-    if sorted_scores.len() >= 4 {
-        let q1_idx = sorted_scores.len() / 4;
-        let q3_idx = 3 * sorted_scores.len() / 4;
-        info!("📈 Quartiles: Q1={:.1}, Q3={:.1}",
-            sorted_scores[q1_idx],
-            sorted_scores[q3_idx.min(sorted_scores.len() - 1)]);
+        0.0
     }
 }
 
-fn weighted_tournament_selection(population: &[ScoredGenome], rng: &mut impl Rng) -> Genotype {
-    const TOURNAMENT_SIZE: usize = 3;
+fn calculate_genetic_distance(genome1: &Genotype, genome2: &Genotype) -> f32 {
+    let mut distance = 0.0;
 
-    let weights: Vec<f32> = population.iter()
-        .enumerate()
-        .map(|(i, _)| 1.0 / (1.0 + i as f32 * 0.1))
-        .collect();
+    // Distance dans la matrice des forces
+    for i in 0..genome1.force_matrix.len() {
+        let diff = genome1.force_matrix[i] - genome2.force_matrix[i];
+        distance += diff * diff;
+    }
 
-    let mut tournament_indices = Vec::new();
+    // Distance dans les forces de nourriture
+    for i in 0..genome1.food_forces.len() {
+        let diff = genome1.food_forces[i] - genome2.food_forces[i];
+        distance += diff * diff;
+    }
+
+    distance.sqrt()
+}
+
+fn generate_improved_population(
+    scored_genomes: &[ScoredGenome],
+    target_size: usize,
+    config: &GeneticConfig,
+    stats: &EpochStats,
+    rng: &mut impl Rng,
+) -> Vec<Genotype> {
+    let mut new_population = Vec::with_capacity(target_size);
+
+    // 1. ÉLITISME ÉTENDU - Conserver les meilleurs avec leurs variations
+    let elite_count = ((target_size as f32 * config.elite_ratio).ceil() as usize).max(1);
+
+    info!("🏆 Conservation de {} élites sur {} individus", elite_count, target_size);
+
+    for i in 0..elite_count.min(scored_genomes.len()) {
+        let mut elite = scored_genomes[i].genotype.clone();
+
+        // Appliquer une très légère mutation aux élites pour éviter la stagnation
+        let light_mutation_rate = config.mutation_rate * 0.1;
+        elite.mutate(light_mutation_rate, rng);
+
+        new_population.push(elite);
+    }
+
+    // 2. REPRODUCTION SÉLECTIVE avec validation
+    while new_population.len() < target_size {
+        let mut offspring = if rng.random::<f32>() < config.crossover_rate && scored_genomes.len() >= 2 {
+            // Crossover avec sélection basée sur la performance ET la cohérence
+            let parent1 = &enhanced_tournament_selection(scored_genomes, config, rng);
+            let parent2 = &enhanced_tournament_selection(scored_genomes, config, rng);
+
+            let mut child = parent1.crossover(parent2, rng);
+
+            // Validation post-crossover
+            let max_attempts = 3;
+            for _ in 0..max_attempts {
+                if child.strategy_coherence >= config.coherence_threshold {
+                    break;
+                }
+                // Réessayer le crossover si incohérent
+                child = parent1.crossover(parent2, rng);
+            }
+
+            child
+        } else {
+            // Reproduction asexuée avec mutation
+            let parent = enhanced_tournament_selection(scored_genomes, config, rng);
+            parent.clone()
+        };
+
+        // Mutation adaptative
+        let adaptive_mutation_rate = calculate_adaptive_mutation_rate(
+            stats,
+            config.mutation_rate,
+            offspring.strategy_coherence
+        );
+
+        offspring.mutate(adaptive_mutation_rate, rng);
+
+        // Validation finale avant ajout
+        if offspring.strategy_coherence >= config.coherence_threshold || new_population.len() >= target_size - 2 {
+            new_population.push(offspring);
+        }
+        // Si validation échoue, créer un individu aléatoire cohérent
+        else if new_population.len() < target_size - 1 {
+            let random_genome = Genotype::random(scored_genomes[0].genotype.type_count);
+            new_population.push(random_genome);
+        }
+    }
+
+    // 3. INJECTION DE DIVERSITÉ si nécessaire
+    if stats.diversity_index < 0.5 && new_population.len() > 2 {
+        let diversity_injection = (target_size as f32 * 0.1) as usize;
+        info!("🌱 Injection de {} individus pour maintenir la diversité", diversity_injection);
+
+        for _ in 0..diversity_injection {
+            if new_population.len() > diversity_injection {
+                let random_genome = Genotype::random(scored_genomes[0].genotype.type_count);
+                let replace_idx = rng.random_range(elite_count..new_population.len());
+                new_population[replace_idx] = random_genome;
+            }
+        }
+    }
+
+    new_population.truncate(target_size);
+    new_population
+}
+
+fn enhanced_tournament_selection(
+    population: &[ScoredGenome],
+    config: &GeneticConfig,
+    rng: &mut impl Rng,
+) -> Genotype {
+    const TOURNAMENT_SIZE: usize = 4; // Tournoi plus grand
+
+    let mut tournament: Vec<&ScoredGenome> = Vec::new();
+
+    // Sélection pondérée pour le tournoi
     for _ in 0..TOURNAMENT_SIZE.min(population.len()) {
+        // Favoriser les individus avec haut score ET haute cohérence
+        let weights: Vec<f32> = population.iter()
+            .enumerate()
+            .map(|(i, genome)| {
+                let rank_weight = 1.0 / (1.0 + i as f32 * 0.1);
+                let coherence_weight = (genome.coherence - config.coherence_threshold).max(0.0) + 0.1;
+                rank_weight * coherence_weight
+            })
+            .collect();
+
         let total_weight: f32 = weights.iter().sum();
         let mut random = rng.random::<f32>() * total_weight;
 
         for (i, &weight) in weights.iter().enumerate() {
             random -= weight;
             if random <= 0.0 {
-                tournament_indices.push(i);
+                tournament.push(&population[i]);
                 break;
             }
         }
     }
 
-    tournament_indices.into_iter()
-        .map(|i| &population[i])
-        .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap())
+    // Choisir le meilleur du tournoi selon le score combiné
+    tournament.into_iter()
+        .max_by(|a, b| {
+            let stats = EpochStats::default(); // Stats simplifiées pour la sélection
+            let score_a = calculate_combined_fitness(a, &stats, config);
+            let score_b = calculate_combined_fitness(b, &stats, config);
+            score_a.partial_cmp(&score_b).unwrap_or(std::cmp::Ordering::Equal)
+        })
         .map(|g| g.genotype.clone())
         .unwrap_or(population[0].genotype.clone())
-}
-
-fn improved_crossover(parent1: &Genotype, parent2: &Genotype, rng: &mut impl Rng) -> Genotype {
-    let mut new_genotype = Genotype::new(parent1.type_count);
-
-    // Crossover des forces particule-particule
-    for i in 0..parent1.force_matrix.len() {
-        if rng.random_bool(0.5) {
-            new_genotype.force_matrix[i] = parent1.force_matrix[i];
-        } else {
-            new_genotype.force_matrix[i] = parent2.force_matrix[i];
-        }
-    }
-
-    // Crossover des forces de nourriture
-    for i in 0..parent1.food_forces.len() {
-        if rng.random_bool(0.5) {
-            new_genotype.food_forces[i] = parent1.food_forces[i];
-        } else {
-            new_genotype.food_forces[i] = parent2.food_forces[i];
-        }
-    }
-
-    new_genotype
 }
 
 fn calculate_adaptive_mutation_rate(
     stats: &EpochStats,
     base_rate: f32,
-    epoch: usize
+    genome_coherence: f32,
 ) -> f32 {
-    let diversity_factor = if stats.std_deviation < 5.0 {
-        2.0
-    } else if stats.std_deviation > 20.0 {
-        0.5
+    // Facteur de diversité
+    let diversity_factor = if stats.diversity_index < 0.3 {
+        2.0 // Augmenter la mutation si faible diversité
+    } else if stats.diversity_index > 0.8 {
+        0.7 // Réduire si trop de diversité
     } else {
         1.0
     };
 
+    // Facteur de stagnation
     let stagnation_factor = if stats.improvement <= 0.0 {
-        1.5
+        1.5 // Plus de mutation si stagnation
+    } else if stats.improvement > 10.0 {
+        0.8 // Moins de mutation si bonne progression
     } else {
         1.0
     };
 
-    let early_exploration = if epoch < 10 {
-        1.5
+    // Facteur de cohérence individuelle
+    let coherence_factor = if genome_coherence > 0.8 {
+        0.5 // Mutations très douces pour les génomes cohérents
+    } else if genome_coherence < 0.4 {
+        1.8 // Plus de mutation pour améliorer la cohérence
     } else {
         1.0
     };
 
-    (base_rate * diversity_factor * stagnation_factor * early_exploration).min(0.5)
+    (base_rate * diversity_factor * stagnation_factor * coherence_factor).clamp(0.01, 0.5)
+}
+
+fn log_advanced_genetic_stats(
+    stats: &EpochStats,
+    sim_params: &SimulationParameters,
+    genomes: &[ScoredGenome],
+) {
+    info!("=== ALGORITHME GÉNÉTIQUE AVANCÉ - ÉPOQUE {} ===", sim_params.current_epoch);
+
+    info!("📊 Statistiques de performance:");
+    info!("   • Meilleur: {:.2}", stats.best_score);
+    info!("   • Moyenne: {:.2} (±{:.2})", stats.average_score, stats.std_deviation);
+    info!("   • Médiane: {:.2}", stats.median_score);
+
+    if stats.improvement > 0.0 {
+        info!("📈 Amélioration: +{:.2} ({:.1}%)",
+            stats.improvement,
+            (stats.improvement / (stats.best_score - stats.improvement) * 100.0).max(0.0));
+    } else if stats.improvement < 0.0 {
+        info!("📉 Régression: {:.2}", stats.improvement);
+    } else {
+        info!("➡️ Stagnation");
+    }
+
+    info!("🧬 Métriques génétiques:");
+    info!("   • Cohérence moyenne: {:.3}", stats.average_coherence);
+    info!("   • Index de diversité: {:.3}", stats.diversity_index);
+
+    let high_coherence_count = genomes.iter().filter(|g| g.coherence > 0.7).count();
+    info!("   • Génomes très cohérents: {}/{}", high_coherence_count, genomes.len());
+
+    // Analyser les tendances
+    let improving_genomes = genomes.iter().filter(|g| g.fitness_trend > 0.0).count();
+    info!("   • Génomes en progression: {}/{}", improving_genomes, genomes.len());
+
+    // Prédiction de performance
+    let genetic_config = GeneticConfig::optimized();
+    let predicted_improvement = if stats.diversity_index > 0.5 && stats.average_coherence > 0.6 {
+        "Forte"
+    } else if stats.diversity_index > 0.3 || stats.average_coherence > 0.4 {
+        "Modérée"
+    } else {
+        "Faible"
+    };
+
+    info!("🔮 Potentiel d'amélioration prédit: {}", predicted_improvement);
+    info!("⚙️ Configuration: {:.0}% élites, {:.0}% crossover, mutation adaptative",
+        genetic_config.elite_ratio * 100.0, genetic_config.crossover_rate * 100.0);
 }
 
 fn reset_simulations_with_new_genomes(
@@ -282,20 +481,24 @@ fn reset_simulations_with_new_genomes(
     let particles_per_type = (sim_params.particle_count + particle_config.type_count - 1) / particle_config.type_count;
     let mut particle_positions = Vec::new();
 
+    // Générer nouvelles positions pour réinitialiser l'environnement
     for particle_type in 0..particle_config.type_count {
         for _ in 0..particles_per_type {
             particle_positions.push((particle_type, random_position_in_grid(grid, rng)));
         }
     }
 
+    // Appliquer les nouveaux génomes aux simulations
     let mut sim_index = 0;
-    for (_, mut genotype, mut score, children) in simulations.iter_mut() {
+    for (sim_id, mut genotype, mut score, children) in simulations.iter_mut() {
         if sim_index < new_genomes.len() {
             *genotype = new_genomes[sim_index].clone();
+            info!("Simulation {} - Cohérence: {:.3}", sim_id.0, genotype.strategy_coherence);
         }
 
         *score = Score::default();
 
+        // Repositionner les particules
         let mut particle_index = 0;
         for child in children.iter() {
             if let Ok((mut transform, mut velocity, particle_type)) = particles.get_mut(child) {
@@ -312,6 +515,7 @@ fn reset_simulations_with_new_genomes(
         sim_index += 1;
     }
 
+    // Repositionner la nourriture
     let new_food_positions: Vec<Vec3> = (0..food_params.food_count)
         .map(|_| random_position_in_grid(grid, rng))
         .collect();
@@ -328,8 +532,9 @@ fn reset_simulations_with_new_genomes(
         }
     }
 
-    info!("✅ Réinitialisation pour l'époque {} terminée avec {} génomes",
-        sim_params.current_epoch, new_genomes.len());
+    let avg_coherence = new_genomes.iter().map(|g| g.strategy_coherence).sum::<f32>() / new_genomes.len() as f32;
+    info!("✅ Époque {} initialisée - {} génomes (cohérence moyenne: {:.3})",
+        sim_params.current_epoch, new_genomes.len(), avg_coherence);
 }
 
 fn random_position_in_grid(grid: &GridParameters, rng: &mut impl Rng) -> Vec3 {
