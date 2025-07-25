@@ -92,7 +92,7 @@ pub fn visualizer_ui(
 
             ui.separator();
 
-            if ui.button("↶ Retour au Menu").clicked() {
+            if ui.button("Retour au Menu").clicked() {
                 next_state.set(AppState::MainMenu);
             }
         });

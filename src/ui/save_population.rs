@@ -163,7 +163,7 @@ pub fn enhanced_simulations_list_ui(
                         ui.label(egui::RichText::new("Simulation").strong());
                         ui.label(egui::RichText::new("Score").strong());
                         ui.label(egui::RichText::new("Matrice").strong());
-                        ui.label(egui::RichText::new("Sauver").strong());
+                        ui.label(egui::RichText::new("Sauvegarder").strong());
                         ui.end_row();
 
                         ui.separator();
