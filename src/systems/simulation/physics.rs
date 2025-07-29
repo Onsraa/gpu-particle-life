@@ -211,7 +211,7 @@ fn calculate_acceleration(
     let min_r_normalized = min_r / max_force_range;
 
     let force = if normalized_dist < min_r_normalized {
-        (normalized_dist / min_r_normalized - 1.0)
+        normalized_dist / min_r_normalized - 1.0
     } else {
         attraction
             * (1.0

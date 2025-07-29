@@ -1,13 +1,15 @@
 use crate::plugins::simulation::compute::ComputeEnabled;
 use crate::states::app::AppState;
 use crate::states::simulation::SimulationState;
-use crate::systems::lifecycle::*;
-use crate::systems::persistence::population_save::*;
+use crate::systems::lifecycle::{check_epoch_end, handle_pause_input};
+use crate::systems::persistence::population_save::{
+    load_available_populations, process_save_requests, AvailablePopulations, PopulationSaveEvents,
+};
 use crate::systems::rendering::viewport_manager::ViewportCamera;
 use crate::systems::simulation::collision::detect_food_collision;
-use crate::systems::simulation::physics::*;
-use crate::systems::simulation::reset::*;
-use crate::systems::simulation::spawning::*;
+use crate::systems::simulation::physics::physics_simulation_system;
+use crate::systems::simulation::reset::reset_for_new_epoch;
+use crate::systems::simulation::spawning::{spawn_food, spawn_simulations_with_particles, EntitiesSpawned};
 use bevy::prelude::*;
 use crate::components::entities::food::Food;
 use crate::components::entities::simulation::Simulation;
@@ -42,7 +44,6 @@ impl Plugin for SimulationPlugin {
                     .run_if(in_state(SimulationState::Starting))
                     .run_if(in_state(AppState::Simulation)),
             )
-            // Système physique CPU seulement quand GPU désactivé
             .add_systems(
                 Update,
                 physics_simulation_system
@@ -61,6 +62,7 @@ impl Plugin for SimulationPlugin {
                     .run_if(in_state(SimulationState::Running))
                     .run_if(in_state(AppState::Simulation)),
             )
+            // AJOUT DU SYSTÈME handle_pause_input
             .add_systems(
                 Update,
                 handle_pause_input.run_if(in_state(AppState::Simulation)),
