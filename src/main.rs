@@ -1,3 +1,10 @@
+use crate::plugins::core::camera::CameraPlugin;
+use crate::plugins::core::setup::SetupPlugin;
+use crate::plugins::simulation::compute::ParticleComputePlugin;
+use crate::plugins::simulation::simulation::SimulationPlugin;
+use crate::plugins::simulation::visualizer::VisualizerPlugin;
+use crate::plugins::ui::ui_plugin::UIPlugin;
+use crate::states::app::AppState;
 use bevy::diagnostic::{FrameCount, FrameTimeDiagnosticsPlugin, LogDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::window::{PresentMode, WindowMode};
@@ -10,12 +17,6 @@ mod resources;
 mod states;
 mod systems;
 mod ui;
-
-use crate::plugins::camera::CameraPlugin;
-use crate::plugins::ui::UIPlugin;
-use crate::plugins::visualizer::VisualizerPlugin;
-use crate::states::app::AppState;
-use plugins::{compute::ParticleComputePlugin, setup::SetupPlugin, simulation::SimulationPlugin};
 
 fn main() {
     App::new()

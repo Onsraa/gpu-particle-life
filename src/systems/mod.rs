@@ -1,13 +1,4 @@
-pub mod spawning;
-pub mod movement;
-pub mod collision;
-pub mod camera;
-pub mod debug;
-pub mod debug_particles;
-pub mod visual_highlight;
-pub mod viewport_manager;
-pub mod viewport_debug;
-pub mod reset;
-pub mod viewport_overlay;
-pub mod population_save;
-pub mod spawning_visualizer;
+pub mod lifecycle;
+pub mod persistence;
+pub mod rendering;
+pub mod simulation;
